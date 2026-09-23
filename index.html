@@ -69,7 +69,7 @@
 <script src="nostr-tools-2.25.2.js"></script>
 <script>
 'use strict'
-const VERSAO = 'fase 2 · 23/09/2026 · b'
+const VERSAO = 'fase 2 · 23/09/2026 · c'
 const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub']
 const KIND = 30078
@@ -82,7 +82,7 @@ const gravar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } ca
 $('versao').textContent = VERSAO
 
 // o service worker: é ele que faz a página abrir sem rede
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {})
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {})
 
 function mostrarRede() { $('rede').textContent = navigator.onLine ? 'online' : 'sem rede' }
 mostrarRede(); addEventListener('online', mostrarRede); addEventListener('offline', mostrarRede)
