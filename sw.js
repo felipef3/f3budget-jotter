@@ -1,7 +1,7 @@
 // O service worker do jotter: guarda a página e a biblioteca no aparelho, para
 // ela abrir SEM REDE. Troque VERSAO a cada publicação: o aparelho baixa a nova
 // na próxima abertura com rede, e apaga a antiga.
-const VERSAO = 'jotter-2026-09-23-1'
+const VERSAO = 'jotter-2026-09-23-2'
 const ARQUIVOS = ['./', './index.html', './nostr-tools-2.25.2.js', './manifest.webmanifest', './icone-180.png']
 
 self.addEventListener('install', e => {

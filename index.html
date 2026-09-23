@@ -69,9 +69,9 @@
 <script src="nostr-tools-2.25.2.js"></script>
 <script>
 'use strict'
-const VERSAO = 'fase 2 · 23/09/2026'
+const VERSAO = 'fase 2 · 23/09/2026 · b'
 const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
-const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']
+const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub']
 const KIND = 30078
 const $ = id => document.getElementById(id)
 const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
@@ -107,12 +107,13 @@ function mostrarPareamento() {
 mostrarPareamento()
 
 // ---- pareamento, pelo Nostr --------------------------------------------
-async function parear(codigo) {
-  gravar('nostr.pareado', null); mostrarPareamento()
+// A confirmação do Mac é ouvida separada do pedido, e de novo a cada abertura
+// enquanto não chegar: o Mac pode confirmar depois, com a página fechada.
+function ouvirConfirmacao() {
+  if (!mac || ler('nostr.pareado', null)) return
   const pool = new SimplePool()
-  const desde = Math.floor(Date.now() / 1000) - 5
-  // primeiro assina a resposta, para não perder uma confirmação rápida
-  const sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [mac], '#p': [minha], since: desde }, {
+  const sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [mac], '#p': [minha],
+                                           since: Math.floor(Date.now() / 1000) - 86400 }, {
     onevent(ev) {
       try {
         const c = JSON.parse(nip44.v2.decrypt(ev.content, conversa()))
@@ -120,14 +121,20 @@ async function parear(codigo) {
       } catch {}
     }
   })
+  setTimeout(() => { try { sub.close() } catch {} }, 600000)
+}
+
+async function parear(codigo) {
+  gravar('nostr.pareado', null); mostrarPareamento()
+  ouvirConfirmacao()
+  const pool = new SimplePool()
   const pedido = finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
     tags: [['d', aleatorio(16)], ['p', mac]],
     content: nip44.v2.encrypt(JSON.stringify({ f3: 'parear', codigo }), conversa()) }, unhex(sk))
   const r = await Promise.allSettled(pool.publish(RELAYS, pedido))
   if (!r.some(x => x.status === 'fulfilled')) $('pareamento').innerHTML = '<span class="warn">sem rede para parear — tente com rede</span>'
-  setTimeout(() => { try { sub.close() } catch {} }, 120000)
 }
-if (mac && frag.get('parear')) parear(frag.get('parear'))
+if (mac && frag.get('parear')) parear(frag.get('parear')); else ouvirConfirmacao()
 
 // ---- lançamentos: {tx, d, enviado, relays} -------------------------------
 $('data').value = new Date().toLocaleDateString('sv')  // AAAA-MM-DD no fuso do aparelho
