@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="jotter">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icone-180.png">
+<title>jotter · teste Nostr</title>
+<!--
+  f3budget-jotter — teste de viabilidade, fase 2 (23/09/2026).
+
+  A página mora no GitHub Pages (HTTPS) e abre SEM REDE, pelo service worker.
+  Os lançamentos vão cifrados (NIP-44) para a chave do Mac, em relays Nostr
+  públicos; o Mac busca quando quiser. Nenhum dado de vocês está nesta página:
+  ela é igual para qualquer pessoa. As chaves e os lançamentos ficam só no
+  aparelho (localStorage deste endereço).
+
+  - Parear: ler no celular o QR que `mac.py parear` mostra. O pedido vai pelo
+    Nostr, assinado, com o código de uso único do QR; a resposta do Mac volta
+    pelo Nostr também.
+  - Sem rede, o lançamento fica PENDENTE aqui; sai quando a rede volta.
+  - O `d` do evento é aleatório e guardado com o lançamento: editar republica
+    com o mesmo `d`, e o id do lançamento não fica visível fora da cifra.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --tx:#1b2330; --mute:#667085; --line:#e4e7ec; --ok:#067647; --warn:#b54708; --pri:#0b6bcb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f141b; --card:#18202b; --tx:#e6e9ee; --mute:#98a2b3; --line:#2a3441; --ok:#47cd89; --warn:#fdb022; --pri:#53a6ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.4 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--tx);
+         padding: max(16px, env(safe-area-inset-top)) 16px 16px; }
+  h1 { font-size:18px; margin:0 0 12px; display:flex; justify-content:space-between; align-items:baseline; }
+  h1 small { font-size:12px; font-weight:normal; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  label { display:block; font-size:13px; color:var(--mute); margin:8px 0 4px; }
+  input { width:100%; font:inherit; padding:10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; }
+  button { font:inherit; padding:10px 14px; border-radius:8px; border:1px solid var(--pri); background:var(--pri); color:#fff; margin-top:10px; }
+  button.sec { background:transparent; color:var(--pri); }
+  .mute { color:var(--mute); font-size:13px; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); }
+  ul { padding-left:18px; margin:6px 0; } li { margin:4px 0; }
+</style>
+</head>
+<body>
+<h1>jotter <small id="rede" class="mute"></small></h1>
+
+<div class="card">
+  <div class="mute" id="pareamento">—</div>
+</div>
+
+<div class="card">
+  <label for="desc">Descrição</label><input id="desc" placeholder="PADARIA">
+  <label for="valor">Valor (R$)</label><input id="valor" inputmode="decimal" placeholder="12,50">
+  <label for="data">Data</label><input id="data" type="date">
+  <button id="lancar">Lançar</button>
+</div>
+
+<div class="card">
+  <div><b>Lançamentos deste aparelho</b></div>
+  <ul id="lista"></ul>
+  <button class="sec" id="enviar">Enviar pendentes</button>
+  <div class="mute" id="status"></div>
+</div>
+
+<div class="mute" id="versao"></div>
+
+<script src="nostr-tools-2.25.2.js"></script>
+<script>
+'use strict'
+const VERSAO = 'fase 2 · 23/09/2026'
+const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
+const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net']
+const KIND = 30078
+const $ = id => document.getElementById(id)
+const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
+const unhex = h => Uint8Array.from(h.match(/../g).map(x => parseInt(x, 16)))
+const aleatorio = n => hex(crypto.getRandomValues(new Uint8Array(n)))
+const ler = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } }
+const gravar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+$('versao').textContent = VERSAO
+
+// o service worker: é ele que faz a página abrir sem rede
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {})
+
+function mostrarRede() { $('rede').textContent = navigator.onLine ? 'online' : 'sem rede' }
+mostrarRede(); addEventListener('online', mostrarRede); addEventListener('offline', mostrarRede)
+
+// ---- chaves ------------------------------------------------------------
+let sk = ler('nostr.sk', null)
+if (!sk) { sk = hex(generateSecretKey()); gravar('nostr.sk', sk) }
+const minha = getPublicKey(unhex(sk))
+
+const frag = new URLSearchParams(location.hash.slice(1))
+history.replaceState(null, '', location.pathname)
+if (/^[0-9a-f]{64}$/.test(frag.get('mac') || '')) gravar('nostr.mac', frag.get('mac'))
+const mac = ler('nostr.mac', null)
+const conversa = () => nip44.v2.utils.getConversationKey(unhex(sk), mac)
+
+function mostrarPareamento() {
+  const p = ler('nostr.pareado', null)
+  $('pareamento').innerHTML = !mac ? 'não pareado — leia o QR que o Mac mostra (<code>mac.py parear</code>)'
+    : p ? `<span class="ok">pareado como ${p.pessoa} · ${p.dispositivo} ✓</span>`
+        : 'chave do Mac recebida; esperando o Mac confirmar o pareamento…'
+}
+mostrarPareamento()
+
+// ---- pareamento, pelo Nostr --------------------------------------------
+async function parear(codigo) {
+  gravar('nostr.pareado', null); mostrarPareamento()
+  const pool = new SimplePool()
+  const desde = Math.floor(Date.now() / 1000) - 5
+  // primeiro assina a resposta, para não perder uma confirmação rápida
+  const sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [mac], '#p': [minha], since: desde }, {
+    onevent(ev) {
+      try {
+        const c = JSON.parse(nip44.v2.decrypt(ev.content, conversa()))
+        if (c.f3 === 'pareado') { gravar('nostr.pareado', { pessoa: c.pessoa, dispositivo: c.dispositivo }); mostrarPareamento(); sub.close() }
+      } catch {}
+    }
+  })
+  const pedido = finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
+    tags: [['d', aleatorio(16)], ['p', mac]],
+    content: nip44.v2.encrypt(JSON.stringify({ f3: 'parear', codigo }), conversa()) }, unhex(sk))
+  const r = await Promise.allSettled(pool.publish(RELAYS, pedido))
+  if (!r.some(x => x.status === 'fulfilled')) $('pareamento').innerHTML = '<span class="warn">sem rede para parear — tente com rede</span>'
+  setTimeout(() => { try { sub.close() } catch {} }, 120000)
+}
+if (mac && frag.get('parear')) parear(frag.get('parear'))
+
+// ---- lançamentos: {tx, d, enviado, relays} -------------------------------
+$('data').value = new Date().toLocaleDateString('sv')  // AAAA-MM-DD no fuso do aparelho
+let itens = ler('nostr.itens', [])
+function desenhar() {
+  $('lista').innerHTML = itens.slice().reverse().map(i =>
+    `<li>${i.tx.data} · ${i.tx.descricao.replace(/</g, '&lt;')} · R$ ${i.tx.valor.toFixed(2).replace('.', ',')} — ` +
+    (i.enviado ? `<span class="ok">enviado (${Object.values(i.relays).filter(Boolean).length}/${RELAYS.length})</span>`
+               : `<span class="warn">pendente</span>`) + `</li>`).join('') || '<li class="mute">nenhum</li>'
+}
+desenhar()
+
+const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
+
+$('lancar').onclick = () => {
+  const descricao = $('desc').value.trim(), valor = parseFloat($('valor').value.replace(/\./g, '').replace(',', '.'))
+  if (!descricao || !(valor > 0)) { $('status').textContent = 'preencha descrição e valor'; return }
+  const data = $('data').value
+  const tx = { id: `${data}-${slug(descricao)}-${aleatorio(2)}`, data, descricao, valor,
+    conta: 'c6', forma: 'credito', pago: true, quem_pagou: 'conjunta', tags: [], orcamento: null,
+    rateio: 'casal', origem: 'jotter-nostr', obs: '' }
+  itens.push({ tx, d: aleatorio(16), enviado: false, relays: {} })
+  gravar('nostr.itens', itens); desenhar()
+  $('desc').value = ''; $('valor').value = ''
+  enviar()
+}
+
+let enviando = false
+async function enviar() {
+  if (enviando) return
+  if (!mac) { $('status').textContent = 'sem a chave do Mac: leia o QR do pareamento'; return }
+  const pendentes = itens.filter(i => !i.enviado)
+  if (!pendentes.length) { $('status').textContent = 'nada pendente'; return }
+  if (!navigator.onLine) { $('status').textContent = 'sem rede — fica pendente aqui'; return }
+  enviando = true
+  $('status').textContent = `enviando ${pendentes.length}…`
+  const pool = new SimplePool()
+  try {
+    for (const i of pendentes) {
+      const ev = finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
+        tags: [['d', i.d], ['p', mac]], content: nip44.v2.encrypt(JSON.stringify({ f3: 'tx', tx: i.tx }), conversa()) }, unhex(sk))
+      const prazo = p => Promise.race([p, new Promise((_, r) => setTimeout(() => r('prazo'), 8000))])
+      const res = await Promise.allSettled(pool.publish(RELAYS, ev).map(prazo))
+      res.forEach((r, k) => { i.relays[RELAYS[k]] = r.status === 'fulfilled' })
+      i.enviado = res.some(r => r.status === 'fulfilled')
+      gravar('nostr.itens', itens); desenhar()
+    }
+  } finally {
+    try { pool.close(RELAYS) } catch {}
+    enviando = false
+  }
+  const falta = itens.filter(i => !i.enviado).length
+  $('status').textContent = falta ? `${falta} ainda pendente(s) — sai quando a rede voltar` : 'tudo enviado ✓'
+}
+$('enviar').onclick = enviar
+addEventListener('online', enviar)
+</script>
+</body>
+</html>
