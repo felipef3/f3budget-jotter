@@ -1,212 +1,1554 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="jotter">
+<meta name="theme-color" content="#0f172a">
+<title>f3budget — jotter</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icone-180.png">
-<title>jotter · teste Nostr</title>
 <!--
-  f3budget-jotter — teste de viabilidade, fase 2 (23/09/2026).
-
-  A página mora no GitHub Pages (HTTPS) e abre SEM REDE, pelo service worker.
-  Os lançamentos vão cifrados (NIP-44) para a chave do Mac, em relays Nostr
-  públicos; o Mac busca quando quiser. Nenhum dado de vocês está nesta página:
-  ela é igual para qualquer pessoa. As chaves e os lançamentos ficam só no
-  aparelho (localStorage deste endereço).
-
-  - Parear: ler no celular o QR que `mac.py parear` mostra. O pedido vai pelo
-    Nostr, assinado, com o código de uso único do QR; a resposta do Mac volta
-    pelo Nostr também.
-  - Sem rede, o lançamento fica PENDENTE aqui; sai quando a rede volta.
-  - O `d` do evento é aleatório e guardado com o lançamento: editar republica
-    com o mesmo `d`, e o id do lançamento não fica visível fora da cifra.
+  f3budget-jotter (fatia 4, 23/09/2026): o jotter de f3budget-app@3dd8245, com as
+  telas e os apps (Gasto, Água, Diarista) como eram, e quatro trocas:
+    1. a sincronização: do servidor HTTP do Mac para eventos Nostr cifrados (NIP-44)
+       para a chave do Mac — o Mac busca quando quiser e confirma (contrato v3);
+    2. a configuração (pessoas, contas, rubricas, tags, membros) não vem mais
+       embutida: esta página é PÚBLICA. O Mac a publica cifrada para cada aparelho;
+    3. o ⚙ mostra o pareamento, que é feito lendo o QR do `device pair`;
+    4. «para quem» (membros, «Todos» por padrão) e a nota com «para o Claude».
+  Abre sem rede pelo service worker (sw.js).
 -->
+<script>
+/* Tema antes do paint (evita flash) — igual ao f3jobs: classe no <html>,
+   lembra em localStorage, respeita prefers-color-scheme no 1º load. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('f3budget.theme'); } catch (e) {}
+  if (t === 'dark' || (!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+    document.documentElement.classList.add('dark');
+  }
+})();
+</script>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --tx:#1b2330; --mute:#667085; --line:#e4e7ec; --ok:#067647; --warn:#b54708; --pri:#0b6bcb; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#0f141b; --card:#18202b; --tx:#e6e9ee; --mute:#98a2b3; --line:#2a3441; --ok:#47cd89; --warn:#fdb022; --pri:#53a6ff; } }
-  * { box-sizing: border-box; }
-  body { margin:0; font:16px/1.4 -apple-system, system-ui, sans-serif; background:var(--bg); color:var(--tx);
-         padding: max(16px, env(safe-area-inset-top)) 16px 16px; }
-  h1 { font-size:18px; margin:0 0 12px; display:flex; justify-content:space-between; align-items:baseline; }
-  h1 small { font-size:12px; font-weight:normal; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
-  label { display:block; font-size:13px; color:var(--mute); margin:8px 0 4px; }
-  input { width:100%; font:inherit; padding:10px; border:1px solid var(--line); border-radius:8px; background:transparent; color:inherit; }
-  button { font:inherit; padding:10px 14px; border-radius:8px; border:1px solid var(--pri); background:var(--pri); color:#fff; margin-top:10px; }
-  button.sec { background:transparent; color:var(--pri); }
-  .mute { color:var(--mute); font-size:13px; }
-  .ok { color:var(--ok); } .warn { color:var(--warn); }
-  ul { padding-left:18px; margin:6px 0; } li { margin:4px 0; }
+/* ==== Tokens (linguagem visual do Studio/f3jobs, mobile-first) ==== */
+:root {
+  --bg: #f8fafc;            /* slate-50 */
+  --text: #0f172a;          /* slate-900 */
+  --text-muted: #64748b;    /* slate-500 */
+  --card: #ffffff;
+  --border: #cbd5e1;        /* slate-300 */
+  --input-bg: #ffffff;
+  --seg-bg: #e2e8f0;        /* slate-200 */
+  --seg-text: #334155;      /* slate-700 */
+  --accent: #0284c7;        /* sky-600 */
+  --accent-hover: #0369a1;  /* sky-700 */
+  --ring: #0ea5e9;          /* sky-500 */
+  --green: #16a34a;         /* green-600 */
+  --red: #dc2626;           /* red-600 */
+  --topbar: #0f172a;        /* slate-900 */
+  --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+html.dark {
+  --bg: #020617;            /* slate-950 */
+  --text: #f1f5f9;          /* slate-100 */
+  --text-muted: #94a3b8;    /* slate-400 */
+  --card: #1e293b;          /* slate-800 */
+  --border: #475569;        /* slate-600 */
+  --input-bg: #0f172a;      /* slate-900 */
+  --seg-bg: #0f172a;
+  --seg-text: #cbd5e1;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding-bottom: 48px;
+}
+
+/* ==== Barra de topo ==== */
+.topbar {
+  background: var(--topbar);
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.topbar .brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+.topbar .brand small { font-weight: 400; color: #94a3b8; font-size: 13px; margin-left: 8px; }
+.topbar-actions { display: flex; gap: 8px; }
+.theme-btn {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #f1f5f9;
+  border-radius: 10px;
+  font-size: 18px;
+  width: 44px; height: 44px;
+  cursor: pointer;
+}
+
+/* ==== Layout / cards ==== */
+main { max-width: 560px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 20px 16px;
+}
+.card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 16px; }
+
+/* ==== Formulário ==== */
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 14px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+input[type="text"], input[type="date"], select, textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 48px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+input:focus, select:focus, textarea:focus, .seg button:focus-visible, .btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
+select {
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%2364748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+/* ==== Segmented control (pílula) ==== */
+.seg { display: flex; background: var(--seg-bg); border-radius: 999px; padding: 4px; gap: 4px; }
+.seg button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--seg-text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 11px 6px;
+  min-height: 44px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg button.on { background: var(--accent); color: #ffffff; }
+.hint { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 18px; }
+
+/* ==== Chips (tags, multi-seleção) ==== */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--seg-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 10px 14px;
+  min-height: 42px;
+  cursor: pointer;
+}
+.chip.on { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+.chip.add { color: var(--accent); background: transparent; border-style: dashed; }
+.minichips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.minichip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--seg-bg);
+  color: var(--seg-text);
+}
+
+/* ==== Botões ==== */
+.btn {
+  display: block;
+  width: 100%;
+  border: none;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 16px;
+  min-height: 56px;
+  cursor: pointer;
+}
+.btn-primary { background: var(--accent); color: #ffffff; }
+.btn-primary:active, .btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  font-size: 15px;
+  min-height: 48px;
+  padding: 12px;
+}
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+
+/* ==== Lista do mês ==== */
+.month-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.month-head h2 { margin-bottom: 0; }
+.month-total { font-size: 14px; font-weight: 700; }
+.tx { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.tx:last-child { border-bottom: none; }
+.tx .info { flex: 1; min-width: 0; }
+.tx .desc { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .meta { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .val { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tx .val.neg { color: var(--red); }
+.tx .val.pend { color: var(--text-muted); font-weight: 600; }
+.tx .rm {
+  background: transparent;
+  border: none;
+  color: var(--red);
+  font-size: 20px;
+  font-weight: 700;
+  width: 44px; height: 44px;
+  border-radius: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--seg-bg);
+  color: var(--seg-text);
+  vertical-align: 1px;
+}
+.badge.up    { background: var(--accent); color: #ffffff; }   /* ⬆ a enviar (rascunho local) */
+.badge.mine  { background: var(--green);  color: #ffffff; }   /* ☁ registrado por este aparelho */
+.badge.cloud { background: var(--seg-bg); color: var(--text-muted); } /* ☁ registrado pelo outro */
+.empty { color: var(--text-muted); font-size: 14px; text-align: center; padding: 12px 0; }
+.err { color: var(--red); font-size: 14px; font-weight: 600; margin-top: 8px; display: none; }
+.footnote { font-size: 12px; color: var(--text-muted); text-align: center; }
+
+/* ==== Apps (home estilo tela de smartphone) ==== */
+.screen[hidden] { display: none; }
+.backbtn { background: #1e293b; border: 1px solid #334155; color: #f1f5f9; border-radius: 10px;
+  font-size: 22px; line-height: 1; width: 40px; height: 40px; cursor: pointer; }
+.appgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 12px; padding: 6px 0; }
+.appicon { display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: transparent; border: none; cursor: pointer; color: var(--text); font: inherit; padding: 4px; }
+.appicon .glyph { width: 72px; height: 72px; border-radius: 20px; display: flex; align-items: center;
+  justify-content: center; font-size: 34px; box-shadow: var(--shadow); transition: transform .1s; }
+.appicon .label { font-size: 13px; font-weight: 600; }
+.appicon:active .glyph { transform: scale(.94); }
+.glyph.g-gasto { background: linear-gradient(135deg, #38bdf8, #0284c7); }
+.glyph.g-agua { background: linear-gradient(135deg, #22d3ee, #0369a1); }
+.glyph.g-diarista { background: linear-gradient(135deg, #34d399, #059669); }
+
+/* ==== Toast ==== */
+#toast {
+  position: fixed;
+  left: 50%; bottom: 24px;
+  transform: translateX(-50%) translateY(80px);
+  background: var(--green);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 15px;
+  padding: 12px 20px;
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  transition: transform 0.25s ease;
+  z-index: 20;
+  pointer-events: none;
+}
+#toast.show { transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
-<h1>jotter <small id="rede" class="mute"></small></h1>
 
-<div class="card">
-  <div class="mute" id="pareamento">—</div>
-</div>
+<header class="topbar">
+  <div style="display:flex; align-items:center; gap:10px;">
+    <button class="backbtn" id="backBtn" type="button" hidden aria-label="Voltar aos apps">‹</button>
+    <div class="brand">f3budget <small>jotter</small></div>
+  </div>
+  <div class="topbar-actions">
+    <button class="theme-btn" id="cfgBtn" type="button" aria-label="Conexão com o Mac">⚙</button>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Alternar tema">🌙</button>
+  </div>
+</header>
 
-<div class="card">
-  <label for="desc">Descrição</label><input id="desc" placeholder="PADARIA">
-  <label for="valor">Valor (R$)</label><input id="valor" inputmode="decimal" placeholder="12,50">
-  <label for="data">Data</label><input id="data" type="date">
-  <button id="lancar">Lançar</button>
-</div>
+<main>
+  <!-- ===== Pareamento (⚙) ===== -->
+  <section class="card" id="cfgCard" hidden>
+    <h2>Pareamento</h2>
+    <div class="hint" id="cfgStatus"></div>
+    <div class="hint" style="margin-top:10px;">Para parear este aparelho: no Mac, na shell do f3budget,
+      <code>device pair &lt;pessoa&gt; &lt;aparelho&gt;</code>, e leia o QR com a câmera.</div>
+    <div class="hint" id="cfgInfo" style="margin-top:10px;"></div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="cfgClose" type="button">Fechar</button>
+    </div>
+  </section>
 
-<div class="card">
-  <div><b>Lançamentos deste aparelho</b></div>
-  <ul id="lista"></ul>
-  <button class="sec" id="enviar">Enviar pendentes</button>
-  <div class="mute" id="status"></div>
-</div>
+  <!-- ===== HOME (tela de apps) ===== -->
+  <div class="screen" id="screen-home">
+    <section class="card">
+      <h2>Apps</h2>
+      <div class="appgrid">
+        <button class="appicon" type="button" data-app="gasto"><span class="glyph g-gasto">💸</span><span class="label">Gasto</span></button>
+        <button class="appicon" type="button" data-app="agua"><span class="glyph g-agua">💧</span><span class="label">Água</span></button>
+        <button class="appicon" type="button" data-app="diarista"><span class="glyph g-diarista">🧹</span><span class="label">Diarista</span></button>
+      </div>
+    </section>
+    <p class="footnote">Cada ícone é um jeito de anotar. Novos apps entram aqui conforme a rotina da casa pedir.</p>
+  </div>
 
-<div class="mute" id="versao"></div>
+  <!-- ===== APP: GASTO (lançamento genérico) ===== -->
+  <div class="screen" id="screen-gasto" hidden>
+  <!-- ===== Novo lançamento ===== -->
+  <section class="card">
+    <h2>Novo lançamento</h2>
+    <form id="txForm" autocomplete="off">
+      <div class="field">
+        <label for="fDescricao">Item / descrição</label>
+        <input type="text" id="fDescricao" placeholder="ex.: Feira, Farmácia, Almoço…" enterkeyhint="next">
+      </div>
 
+      <div class="row2">
+        <div class="field">
+          <label for="fValor">Valor (R$)</label>
+          <input type="text" id="fValor" inputmode="decimal" placeholder="0,00">
+        </div>
+        <div class="field">
+          <label for="fData">Data</label>
+          <input type="date" id="fData">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="fConta">Conta</label>
+        <select id="fConta"></select>
+      </div>
+
+      <div class="field">
+        <label>Forma</label>
+        <div class="seg" id="segForma" role="radiogroup" aria-label="Forma de pagamento"></div>
+      </div>
+
+      <div class="field">
+        <label>Quem pagou</label>
+        <div class="seg" id="segQuem" role="radiogroup" aria-label="Quem pagou"></div>
+      </div>
+
+      <div class="field">
+        <label>Pago?</label>
+        <div class="seg" id="segPago" role="radiogroup" aria-label="Pago"></div>
+      </div>
+
+      <div class="field">
+        <label>Rateio</label>
+        <div class="seg" id="segRateio" role="radiogroup" aria-label="Rateio"></div>
+        <div class="hint" id="rateioHint"></div>
+      </div>
+
+      <div class="field">
+        <label>Tags (o que é — pode marcar várias)</label>
+        <div class="chips" id="chipsTags"></div>
+      </div>
+
+      <div class="field">
+        <label for="fOrcamento">Orçamento (linha do plano)</label>
+        <select id="fOrcamento"></select>
+      </div>
+
+      <div class="field">
+        <label>Para quem</label>
+        <div class="chips" id="chipsPara"></div>
+      </div>
+
+      <div class="field">
+        <label for="fObs">Nota (opcional)</label>
+        <input type="text" id="fObs" placeholder="" enterkeyhint="done">
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:normal;">
+          <input type="checkbox" id="fClaude" style="width:auto;min-height:0;"> para o Claude
+        </label>
+      </div>
+
+      <button class="btn btn-primary" type="submit">Adicionar</button>
+      <div class="err" id="formErr"></div>
+    </form>
+  </section>
+
+  <!-- ===== Lançamentos do mês ===== -->
+  <section class="card">
+    <div class="month-head">
+      <h2 id="monthTitle">Lançamentos</h2>
+      <div class="month-total" id="monthTotal"></div>
+    </div>
+    <div id="txList"></div>
+    <button class="btn btn-primary" id="btnSync" type="button" style="margin-top:14px;">Sincronizar</button>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btnCopy" type="button">Copiar JSON</button>
+      <button class="btn btn-secondary" id="btnDownload" type="button">Baixar JSON</button>
+    </div>
+  </section>
+
+  <p class="footnote">Anota offline no aparelho; <strong>Sincronizar</strong> envia pelo Nostr (cifrado, só o Mac lê) e baixa o que o Mac já confirmou — o que você mandou fica «no Mac» até ele confirmar.</p>
+  </div><!-- /screen-gasto -->
+
+  <!-- ===== APP: ÁGUA (tally de galões → conta do mês) ===== -->
+  <div class="screen" id="screen-agua" hidden>
+    <section class="card">
+      <h2>Água mineral</h2>
+      <p class="hint">Registre os galões pedidos. Vira a conta que vence <strong>dia 10 do mês seguinte</strong>
+      (a despesa é do mês de consumo).</p>
+      <div class="row2">
+        <div class="field"><label for="agData">Data do pedido</label><input type="date" id="agData"></div>
+        <div class="field"><label>Tamanho</label><div class="seg" id="segAgTam" role="radiogroup" aria-label="Tamanho"></div></div>
+      </div>
+      <div class="field">
+        <label>Quantos galões</label>
+        <div class="seg" id="segAgQtd" role="radiogroup" aria-label="Quantidade"></div>
+      </div>
+      <button class="btn btn-primary" id="btnAgAdd" type="button">Registrar pedido</button>
+      <div class="err" id="agErr"></div>
+      <div class="hint" style="margin-top:14px;">
+        Preço do galão — 10L: R$ <input type="text" id="agP10" inputmode="decimal" autocapitalize="off" style="width:74px;min-height:36px;display:inline-block;">
+        · 20L: R$ <input type="text" id="agP20" inputmode="decimal" autocapitalize="off" style="width:74px;min-height:36px;display:inline-block;">
+      </div>
+    </section>
+    <section class="card">
+      <div class="month-head">
+        <h2 id="agMonthTitle">Conta do mês</h2>
+        <div class="month-total" id="agTotal"></div>
+      </div>
+      <div class="hint" id="agVenc" style="margin-bottom:8px;"></div>
+      <div id="agList"></div>
+    </section>
+  </div>
+
+  <!-- ===== APP: DIARISTA ===== -->
+  <div class="screen" id="screen-diarista" hidden>
+    <section class="card">
+      <h2>Diarista</h2>
+      <p class="hint">Padrão: <strong>R$ 150</strong> por visita · rateio meio · conta conjunta. Vem terça e
+      quinta (já lançado como previsão). Registre aqui quando ela vier — confirma o dia.</p>
+      <div class="row2">
+        <div class="field"><label for="diaData">Data</label><input type="date" id="diaData"></div>
+        <div class="field"><label for="diaValor">Valor (R$)</label><input type="text" id="diaValor" inputmode="decimal" value="150,00"></div>
+      </div>
+      <div class="field">
+        <label>Pago?</label>
+        <div class="seg" id="segDiaPago" role="radiogroup" aria-label="Pago"></div>
+      </div>
+      <button class="btn btn-primary" id="btnDiaAdd" type="button">Registrar visita</button>
+      <div class="err" id="diaErr"></div>
+    </section>
+    <section class="card">
+      <div class="month-head">
+        <h2 id="diaMonthTitle">Visitas do mês</h2>
+        <div class="month-total" id="diaTotal"></div>
+      </div>
+      <div id="diaList"></div>
+    </section>
+  </div>
+</main>
+
+<div id="toast">Adicionado</div>
+<p class="footnote" id="versao" style="text-align:center;"></p>
 <script src="nostr-tools-2.25.2.js"></script>
+
 <script>
-'use strict'
-const VERSAO = 'fase 2 · 23/09/2026 · f'
-const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
-const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub']
-const KIND = 30078
-const $ = id => document.getElementById(id)
-const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
-const unhex = h => Uint8Array.from(h.match(/../g).map(x => parseInt(x, 16)))
-const aleatorio = n => hex(crypto.getRandomValues(new Uint8Array(n)))
-const ler = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } }
-const gravar = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
-$('versao').textContent = VERSAO
+'use strict';
 
-// o service worker: é ele que faz a página abrir sem rede
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {})
+/* =====================================================================
+ * CONFIG — vem do MAC, cifrada (evento `config` do `sync`), e fica guardada no
+ * aparelho. Esta página é pública: nada da casa vem embutido. Antes do primeiro
+ * sync, só o mínimo para a tela funcionar (sem contribuições nem rubricas).
+ * ===================================================================== */
+var VERSAO = 'jotter · fatia 4 · 23/09/2026 · a';
+var LS_CONFIG = 'f3budget.jotter.config';
+var CONFIG_MINIMA = {
+  pessoas: { felipe: { nome: 'Felipe', contribuicao: 1 }, natalia: { nome: 'Natália', contribuicao: 1 } },
+  contas: { c6: { nome: 'C6', titular: 'conjunta' } },
+  formas: ['credito', 'debito', 'pix', 'dinheiro'],
+  tags: [], orcamentos: {},
+  membros: { todos: { nome: 'Todos', apelidos: [] } },
+  metaDescricao: 'Livro-caixa de um mês (um arquivo por mês).'
+};
+var CONFIG = (function () {
+  try { var c = JSON.parse(localStorage.getItem(LS_CONFIG)); if (c && c.pessoas) return c; } catch (e) {}
+  return CONFIG_MINIMA;
+})();
+if (!CONFIG.metaDescricao) CONFIG.metaDescricao = CONFIG_MINIMA.metaDescricao;
+if (!CONFIG.membros) CONFIG.membros = CONFIG_MINIMA.membros;
+var CONFIG_DO_MAC = CONFIG !== CONFIG_MINIMA;
 
-function mostrarRede() { $('rede').textContent = navigator.onLine ? 'online' : 'sem rede' }
-mostrarRede(); addEventListener('online', mostrarRede); addEventListener('offline', mostrarRede)
-
-// ---- chaves ------------------------------------------------------------
-let sk = ler('nostr.sk', null)
-if (!sk) { sk = hex(generateSecretKey()); gravar('nostr.sk', sk) }
-const minha = getPublicKey(unhex(sk))
-
-const frag = new URLSearchParams(location.hash.slice(1))
-history.replaceState(null, '', location.pathname)
-// O QR do terminal manda a chave e o código em base64url (#m=…&p=…), mais curto
-// que hexadecimal: o QR cai da versão 8 para a 5 e cabe na altura do terminal.
-const deB64 = t => { try { const b = atob(t.replace(/-/g, '+').replace(/_/g, '/')); return hex(Uint8Array.from(b, c => c.charCodeAt(0))) } catch { return '' } }
-if (frag.get('m')) frag.set('mac', deB64(frag.get('m')))
-if (frag.get('p')) frag.set('parear', deB64(frag.get('p')))
-if (/^[0-9a-f]{64}$/.test(frag.get('mac') || '')) gravar('nostr.mac', frag.get('mac'))
-const mac = ler('nostr.mac', null)
-const conversa = () => nip44.v2.utils.getConversationKey(unhex(sk), mac)
-
-function mostrarPareamento() {
-  const p = ler('nostr.pareado', null)
-  $('pareamento').innerHTML = !mac ? 'não pareado — leia o QR que o Mac mostra (<code>mac.py parear</code>)'
-    : p ? `<span class="ok">pareado como ${p.pessoa} · ${p.dispositivo} ✓</span>`
-        : 'chave do Mac recebida; esperando o Mac confirmar o pareamento…'
+var SOMA_CONTRIB, PCT_FELIPE, PCT_NATALIA;
+function calcPct() {
+  SOMA_CONTRIB = CONFIG.pessoas.felipe.contribuicao + CONFIG.pessoas.natalia.contribuicao;
+  PCT_FELIPE  = CONFIG.pessoas.felipe.contribuicao  / SOMA_CONTRIB;
+  PCT_NATALIA = CONFIG.pessoas.natalia.contribuicao / SOMA_CONTRIB;
 }
-mostrarPareamento()
+calcPct();
 
-// ---- pareamento, pelo Nostr --------------------------------------------
-// A confirmação do Mac é ouvida separada do pedido, e de novo a cada abertura
-// enquanto não chegar: o Mac pode confirmar depois, com a página fechada.
-// `desde`: ao parear de novo, só vale confirmação posterior ao pedido — antes,
-// a confirmação do pareamento anterior fazia a página dizer «pareado» sem o Mac
-// ter respondido nada (23/09/2026).
-function ouvirConfirmacao(desde) {
-  if (!mac || ler('nostr.pareado', null)) return
-  desde = desde ?? ler('nostr.pedido_em', Math.floor(Date.now() / 1000) - 86400)
-  const pool = new SimplePool()
-  const sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [mac], '#p': [minha], since: desde }, {
-    onevent(ev) {
-      if (ev.created_at < desde) return
-      try {
-        const c = JSON.parse(nip44.v2.decrypt(ev.content, conversa()))
-        if (c.f3 === 'pareado') { gravar('nostr.pareado', { pessoa: c.pessoa, dispositivo: c.dispositivo }); mostrarPareamento(); sub.close() }
-      } catch {}
-    }
-  })
-  setTimeout(() => { try { sub.close() } catch {} }, 600000)
+var LS_PREFIX = 'f3budget.jotter.v2.'; // + AAAA-MM (v2 = contrato com forma/tags/orcamento)
+var LS_CUSTOM_CONTAS = 'f3budget.jotter.custom.contas'; // {id:{nome,titular}} criadas no aparelho
+var LS_CUSTOM_TAGS   = 'f3budget.jotter.custom.tags';   // [string] criadas no aparelho
+/* ---- sync (passo 2) ---- */
+var LS_IDENT  = 'f3budget.jotter.identidade';  // {servidor, token, pessoa?, dispositivo?}
+var LS_REMOTE = 'f3budget.jotter.remote.';     // + AAAA-MM → {meta, transacoes} baixado do Mac
+var LS_SYNCED = 'f3budget.jotter.synced.';     // + AAAA-MM → {id:true} já confirmados no servidor
+
+/* ============================ helpers ============================ */
+
+function $(id) { return document.getElementById(id); }
+
+function todayISO() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
-async function parear(codigo) {
-  gravar('nostr.pareado', null); mostrarPareamento()
-  const pedidoEm = Math.floor(Date.now() / 1000) - 5
-  gravar('nostr.pedido_em', pedidoEm)
-  ouvirConfirmacao(pedidoEm)
-  const pool = new SimplePool()
-  const pedido = finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
-    tags: [['d', aleatorio(16)], ['p', mac]],
-    content: nip44.v2.encrypt(JSON.stringify({ f3: 'parear', codigo }), conversa()) }, unhex(sk))
-  const r = await Promise.allSettled(pool.publish(RELAYS, pedido))
-  if (!r.some(x => x.status === 'fulfilled')) $('pareamento').innerHTML = '<span class="warn">sem rede para parear — tente com rede</span>'
-}
-// Código de QR já usado não pede de novo: reabrir a página pelo histórico do
-// Safari traz o endereço antigo, com o código, e ela reenviava o pedido.
-const usados = ler('nostr.codigos', [])
-const codigo = frag.get('parear')
-if (mac && codigo && !usados.includes(codigo)) { gravar('nostr.codigos', usados.concat(codigo)); parear(codigo) }
-else ouvirConfirmacao()
-
-// ---- lançamentos: {tx, d, enviado, relays} -------------------------------
-$('data').value = new Date().toLocaleDateString('sv')  // AAAA-MM-DD no fuso do aparelho
-let itens = ler('nostr.itens', [])
-function desenhar() {
-  $('lista').innerHTML = itens.slice().reverse().map(i =>
-    `<li>${i.tx.data} · ${i.tx.descricao.replace(/</g, '&lt;')} · R$ ${i.tx.valor.toFixed(2).replace('.', ',')} — ` +
-    (i.enviado ? `<span class="ok">enviado (${Object.values(i.relays).filter(Boolean).length}/${RELAYS.length})</span>`
-               : `<span class="warn">pendente</span>`) + `</li>`).join('') || '<li class="mute">nenhum</li>'
-}
-desenhar()
-
-const slug = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
-
-$('lancar').onclick = () => {
-  const descricao = $('desc').value.trim(), valor = parseFloat($('valor').value.replace(/\./g, '').replace(',', '.'))
-  if (!descricao || !(valor > 0)) { $('status').textContent = 'preencha descrição e valor'; return }
-  const data = $('data').value
-  const tx = { id: `${data}-${slug(descricao)}-${aleatorio(2)}`, data, descricao, valor,
-    conta: 'c6', forma: 'credito', pago: true, quem_pagou: 'conjunta', tags: [], orcamento: null,
-    rateio: 'casal', origem: 'jotter-nostr', obs: '' }
-  itens.push({ tx, d: aleatorio(16), enviado: false, relays: {} })
-  gravar('nostr.itens', itens); desenhar()
-  $('desc').value = ''; $('valor').value = ''
-  enviar()
+/* slug: minúsculo, sem acento, hífens */
+function slugify(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'lancamento';
 }
 
-let enviando = false
-async function enviar() {
-  if (enviando) return
-  if (!mac) { $('status').textContent = 'sem a chave do Mac: leia o QR do pareamento'; return }
-  const pendentes = itens.filter(i => !i.enviado)
-  if (!pendentes.length) { $('status').textContent = 'nada pendente'; return }
-  if (!navigator.onLine) { $('status').textContent = 'sem rede — fica pendente aqui'; return }
-  enviando = true
-  $('status').textContent = `enviando ${pendentes.length}…`
-  const pool = new SimplePool()
-  try {
-    for (const i of pendentes) {
-      const ev = finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
-        tags: [['d', i.d], ['p', mac]], content: nip44.v2.encrypt(JSON.stringify({ f3: 'tx', tx: i.tx }), conversa()) }, unhex(sk))
-      const prazo = p => Promise.race([p, new Promise((_, r) => setTimeout(() => r('prazo'), 8000))])
-      const res = await Promise.allSettled(pool.publish(RELAYS, ev).map(prazo))
-      res.forEach((r, k) => { i.relays[RELAYS[k]] = r.status === 'fulfilled' })
-      i.enviado = res.some(r => r.status === 'fulfilled')
-      gravar('nostr.itens', itens); desenhar()
-    }
-  } finally {
-    try { pool.close(RELAYS) } catch {}
-    enviando = false
+/* valor BR: aceita "12,50", "12.50", "1.234,56", "-30,16" → número (ponto) */
+function parseValor(s) {
+  s = String(s).trim();
+  if (!s) return NaN;
+  if (s.indexOf(',') >= 0) {
+    s = s.replace(/\./g, '').replace(',', '.'); // vírgula é o decimal; pontos são milhar
   }
-  const falta = itens.filter(i => !i.enviado).length
-  $('status').textContent = falta ? `${falta} ainda pendente(s) — sai quando a rede voltar` : 'tudo enviado ✓'
+  var n = Number(s);
+  return isFinite(n) ? Math.round(n * 100) / 100 : NaN;
 }
-$('enviar').onclick = enviar
-addEventListener('online', enviar)
+
+var brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+function fmtBRL(n) { return brl.format(n); }
+function fmtPct(p) { return (p * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'; }
+
+var MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+             'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+function labelMes(ym) { // "2026-03" → "março de 2026"
+  var p = ym.split('-');
+  return MESES[Number(p[1]) - 1] + ' de ' + p[0];
+}
+
+/* ======================= storage por mês ======================= */
+
+function loadMonth(ym) {
+  try {
+    var raw = localStorage.getItem(LS_PREFIX + ym);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+function saveMonth(ym, txs) {
+  try { localStorage.setItem(LS_PREFIX + ym, JSON.stringify(txs)); } catch (e) {}
+}
+
+/* id: AAAA-MM-DD-<slug>; se colidir no mês, sufixa -2, -3… */
+function genId(data, descricao, txs) {
+  var base = data + '-' + slugify(descricao);
+  var id = base, n = 2;
+  var ids = {};
+  txs.forEach(function (t) { ids[t.id] = true; });
+  while (ids[id]) { id = base + '-' + n; n++; }
+  return id;
+}
+
+/* ==================== estado dos segmented ==================== */
+
+var state = { conta: 'c6', forma: 'credito', quem_pagou: 'conjunta', pago: true, rateio: 'casal', tags: [], para_quem: 'todos' };
+
+function buildSeg(el, opts, get, set) {
+  opts.forEach(function (o) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = o.label;
+    b.setAttribute('role', 'radio');
+    b.addEventListener('click', function () { set(o.value); syncSeg(el, opts, get); });
+    el.appendChild(b);
+  });
+  syncSeg(el, opts, get);
+}
+function syncSeg(el, opts, get) {
+  var cur = get();
+  Array.prototype.forEach.call(el.children, function (b, i) {
+    var on = opts[i].value === cur;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
+/* ======================= dica de rateio ======================= */
+
+function updateRateioHint() {
+  var el = $('rateioHint');
+  var v = parseValor($('fValor').value);
+  var abs = isFinite(v) ? Math.abs(v) : NaN;
+  var f, n;
+  switch (state.rateio) {
+    case 'casal':
+      if (!CONFIG_DO_MAC) { el.textContent = 'Pelo % de contribuição (chega do Mac no primeiro sincronizar).'; break; }
+      if (isFinite(abs) && abs > 0) {
+        f = Math.round(abs * PCT_FELIPE * 100) / 100;
+        n = Math.round((abs - f) * 100) / 100;
+        el.textContent = 'Casal ' + fmtPct(PCT_FELIPE) + ' / ' + fmtPct(PCT_NATALIA) +
+          ' → Felipe ' + fmtBRL(f) + ' · Natália ' + fmtBRL(n);
+      } else {
+        el.textContent = 'Pelo % de contribuição: Felipe ' + fmtPct(PCT_FELIPE) + ' · Natália ' + fmtPct(PCT_NATALIA);
+      }
+      break;
+    case 'meio':
+      if (isFinite(abs) && abs > 0) {
+        f = Math.round(abs / 2 * 100) / 100;
+        el.textContent = '50/50 → Felipe ' + fmtBRL(f) + ' · Natália ' + fmtBRL(Math.round((abs - f) * 100) / 100);
+      } else {
+        el.textContent = 'Divide meio a meio (50/50).';
+      }
+      break;
+    case 'felipe':  el.textContent = '100% Felipe (gasto pessoal).'; break;
+    case 'natalia': el.textContent = '100% Natália (gasto pessoal).'; break;
+  }
+}
+
+/* ============ contas (select + "nova"), tags, orçamento ============ */
+
+function loadCustom(key, fallback) {
+  try {
+    var raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) { return fallback; }
+}
+function saveCustom(key, v) {
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
+}
+
+/* CONFIG.contas + contas criadas no aparelho (localStorage) */
+function allContas() {
+  var out = {};
+  Object.keys(CONFIG.contas).forEach(function (k) { out[k] = CONFIG.contas[k]; });
+  var extra = loadCustom(LS_CUSTOM_CONTAS, {});
+  Object.keys(extra).forEach(function (k) { if (!out[k]) out[k] = extra[k]; });
+  return out;
+}
+
+function buildContaSelect() {
+  var sel = $('fConta');
+  sel.textContent = '';
+  var contas = allContas();
+  Object.keys(contas).forEach(function (id) {
+    var o = document.createElement('option');
+    o.value = id;
+    o.textContent = contas[id].nome;
+    sel.appendChild(o);
+  });
+  var nova = document.createElement('option');
+  nova.value = '__nova__';
+  nova.textContent = '+ nova conta…';
+  sel.appendChild(nova);
+  sel.value = state.conta;
+}
+
+/* REGRA DE DEFAULT do quem_pagou (contrato §4): conta conjunta → 'conjunta';
+   conta com titular pessoa → essa pessoa; titular desconhecido (conta criada
+   no aparelho) → mantém a escolha atual. O usuário pode sobrepor no segmented. */
+function applyQuemDefault() {
+  var c = allContas()[state.conta];
+  var t = c && c.titular;
+  if (t === 'conjunta' || (t && CONFIG.pessoas[t])) {
+    state.quem_pagou = t;
+    syncSeg($('segQuem'), QUEM_OPTS, function () { return state.quem_pagou; });
+  }
+}
+
+function onContaChange() {
+  var sel = $('fConta');
+  var v = sel.value;
+  if (v === '__nova__') {
+    var nome = prompt('Nome da nova conta:');
+    nome = nome ? nome.trim() : '';
+    if (!nome) { sel.value = state.conta; return; }
+    var id = slugify(nome);
+    if (!allContas()[id]) {
+      var extra = loadCustom(LS_CUSTOM_CONTAS, {});
+      extra[id] = { nome: nome, titular: null };
+      saveCustom(LS_CUSTOM_CONTAS, extra);
+    }
+    state.conta = id;
+    buildContaSelect();
+    render(); // conta nova pode renomear linhas da lista
+    return;   // titular desconhecido → não mexe no quem_pagou
+  }
+  state.conta = v;
+  applyQuemDefault();
+}
+
+/* CONFIG.tags + tags criadas no aparelho */
+function allTags() {
+  var seen = {}, out = [];
+  CONFIG.tags.concat(loadCustom(LS_CUSTOM_TAGS, [])).forEach(function (t) {
+    if (!seen[t]) { seen[t] = true; out.push(t); }
+  });
+  return out;
+}
+
+function buildTagChips() {
+  var box = $('chipsTags');
+  box.textContent = '';
+  allTags().forEach(function (tag) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = tag;
+    var on = state.tags.indexOf(tag) >= 0;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.addEventListener('click', function () {
+      var i = state.tags.indexOf(tag);
+      if (i >= 0) state.tags.splice(i, 1); else state.tags.push(tag);
+      var now = state.tags.indexOf(tag) >= 0;
+      b.classList.toggle('on', now);
+      b.setAttribute('aria-pressed', now ? 'true' : 'false');
+    });
+    box.appendChild(b);
+  });
+  var add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'chip add';
+  add.textContent = '+ nova tag';
+  add.addEventListener('click', function () {
+    var nome = prompt('Nome da nova tag:');
+    nome = nome ? nome.trim() : '';
+    if (!nome) return;
+    var tag = slugify(nome);
+    if (allTags().indexOf(tag) < 0) {
+      var extra = loadCustom(LS_CUSTOM_TAGS, []);
+      extra.push(tag);
+      saveCustom(LS_CUSTOM_TAGS, extra);
+    }
+    if (state.tags.indexOf(tag) < 0) state.tags.push(tag); // nova tag já entra marcada
+    buildTagChips();
+  });
+  box.appendChild(add);
+}
+
+function buildOrcamentos() {
+  var sel = $('fOrcamento');
+  var atual = sel.value;
+  sel.textContent = '';
+  var opt = document.createElement('option');
+  opt.value = '';
+  opt.textContent = '(a classificar)';
+  sel.appendChild(opt);
+  Object.keys(CONFIG.orcamentos).forEach(function (grupo) {
+    var g = CONFIG.orcamentos[grupo];
+    Object.keys(g.itens).forEach(function (item) {
+      var o = document.createElement('option');
+      o.value = grupo + '.' + item;
+      o.textContent = g.descricao + ' › ' + g.itens[item];
+      sel.appendChild(o);
+    });
+  });
+  sel.value = atual || '';
+}
+
+/* ---- para quem (membros da casa, do Mac); «todos» é o padrão ---- */
+function buildParaQuem() {
+  var box = $('chipsPara');
+  box.textContent = '';
+  var ms = CONFIG.membros || CONFIG_MINIMA.membros;
+  if (!ms[state.para_quem]) state.para_quem = 'todos';
+  Object.keys(ms).forEach(function (k) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = ms[k].nome || k;
+    var on = state.para_quem === k;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.addEventListener('click', function () { state.para_quem = k; buildParaQuem(); });
+    box.appendChild(b);
+  });
+}
+
+/* ===================== adicionar / remover ===================== */
+
+function currentMonth() {
+  var d = $('fData').value || todayISO();
+  return d.slice(0, 7);
+}
+
+function showErr(msg) {
+  var e = $('formErr');
+  e.textContent = msg;
+  e.style.display = msg ? 'block' : 'none';
+}
+
+function addTx(ev) {
+  ev.preventDefault();
+  showErr('');
+
+  var descricao = $('fDescricao').value.trim();
+  var data = $('fData').value;
+  var valor = parseValor($('fValor').value);
+
+  if (!descricao) { showErr('Falta a descrição (o item).'); $('fDescricao').focus(); return; }
+  if (!data) { showErr('Falta a data.'); return; }
+  if (!isFinite(valor)) { showErr('Valor inválido — use 12,50 ou 12.50 (negativo = reembolso).'); $('fValor').focus(); return; }
+
+  var ym = data.slice(0, 7);
+  var txs = loadMonth(ym);
+
+  /* objeto transação — CONTRATO v2 (nomes E ordem dos campos importam;
+     é o que intel/ e o agente consomem) */
+  var tx = {
+    id: genId(data, descricao, txs),
+    data: data,
+    descricao: descricao,
+    valor: valor,
+    conta: state.conta,
+    forma: state.forma,
+    pago: state.pago,
+    quem_pagou: state.quem_pagou,
+    tags: state.tags.slice(),
+    orcamento: $('fOrcamento').value || null,
+    rateio: state.rateio,
+    para_quem: state.para_quem,
+    origem: 'jotter'
+  };
+  var nota = $('fObs').value.trim();
+  if (nota) tx.notas = [{ texto: nota, autor: (getIdent() || {}).pessoa || 'jotter',
+                          em: new Date().toISOString(), claude: $('fClaude').checked }];
+
+  txs.push(tx);
+  saveMonth(ym, txs);
+
+  /* limpa só o que muda a cada item; conta/forma/quem/pago/rateio/tags/
+     orçamento ficam (no mercado se lança vários itens com o mesmo contexto) */
+  $('fDescricao').value = '';
+  $('fValor').value = '';
+  $('fObs').value = '';
+  $('fClaude').checked = false;
+  updateRateioHint();
+  render();
+  toast('Adicionado');
+  $('fDescricao').focus();
+}
+
+function removeTx(ym, id) {
+  var txs = loadMonth(ym).filter(function (t) { return t.id !== id; });
+  saveMonth(ym, txs);
+  render();
+}
+
+/* ===================== sync pelo Nostr (fatia 4) =====================
+ * SOBE: cada rascunho vira um evento kind 30078 cifrado (NIP-44) para a chave do
+ * Mac, assinado pela chave deste aparelho, com um `d` estável por lançamento
+ * (editar republica com o mesmo `d`). BAIXA: o que o Mac publicou para este
+ * aparelho — a configuração e os meses (livro + previsto). O Mac confirma o que
+ * chega; até lá, o lançamento aparece aqui como «no Mac». */
+
+var NT = window.NostrTools;
+var RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub'];
+var KIND = 30078;
+var LS_SK = 'nostr.sk', LS_MAC = 'nostr.mac', LS_PAREADO = 'nostr.pareado';  // os mesmos do teste: o pareamento vale
+var LS_D = 'f3budget.jotter.d';               // {id do lançamento: d do evento}
+var LS_REMOTE = 'f3budget.jotter.remote.';    // + AAAA-MM → {ledger, forecast, gerado_em} do Mac
+var LS_SYNCED = 'f3budget.jotter.synced.';    // + AAAA-MM → {id: true} já enviados
+
+function hex(b) { return Array.from(b, function (x) { return x.toString(16).padStart(2, '0'); }).join(''); }
+function unhex(h) { return Uint8Array.from(h.match(/../g).map(function (x) { return parseInt(x, 16); })); }
+function aleatorio(n) { return hex(crypto.getRandomValues(new Uint8Array(n))); }
+
+var SK = loadCustom(LS_SK, null);
+if (!SK) { SK = hex(NT.generateSecretKey()); saveCustom(LS_SK, SK); }
+var MINHA = NT.getPublicKey(unhex(SK));
+function macPub() { return loadCustom(LS_MAC, null); }
+function conversa() { return NT.nip44.v2.utils.getConversationKey(unhex(SK), macPub()); }
+function getIdent() { return loadCustom(LS_PAREADO, null); }   // {pessoa, dispositivo}
+function getSynced(ym){ return loadCustom(LS_SYNCED + ym, {}); }
+function saveSynced(ym, o){ saveCustom(LS_SYNCED + ym, o); }
+function getRemote(ym){ return loadCustom(LS_REMOTE + ym, null); }
+function saveRemote(ym, doc){ saveCustom(LS_REMOTE + ym, doc); }
+function dDe(id) { var m = loadCustom(LS_D, {}); if (!m[id]) { m[id] = aleatorio(16); saveCustom(LS_D, m); } return m[id]; }
+
+/* os meses que têm rascunho neste aparelho */
+function mesesLocais() {
+  var out = [];
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (k && k.indexOf(LS_PREFIX) === 0) out.push(k.slice(LS_PREFIX.length));
+  }
+  return out.sort();
+}
+
+function comPrazo(p, ms) { return Promise.race([p, new Promise(function (_, r) { setTimeout(function () { r('prazo'); }, ms); })]); }
+
+var syncing = false;
+function sincronizar(silencioso) {
+  if (syncing) return;
+  if (!macPub()) { if (!silencioso) { openCfg(); toast('Pareie com o Mac primeiro'); } return; }
+  if (!navigator.onLine) { if (!silencioso) toast('Sem rede — fica guardado aqui'); return; }
+  syncing = true;
+  setSyncBusy('Sincronizando…');
+  var pool = new NT.SimplePool(), enviados = 0, falhas = 0, conv = conversa();
+  var chain = Promise.resolve();
+  mesesLocais().forEach(function (ym) {
+    var synced = getSynced(ym);
+    loadMonth(ym).filter(function (t) { return !synced[t.id]; }).forEach(function (t) {
+      chain = chain.then(function () {
+        var ev = NT.finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
+          tags: [['d', dDe(t.id)], ['p', macPub()]],
+          content: NT.nip44.v2.encrypt(JSON.stringify({ f3: 'tx', v: 3, tx: t }), conv) }, unhex(SK));
+        return Promise.allSettled(pool.publish(RELAYS, ev).map(function (p) { return comPrazo(p, 8000); }))
+          .then(function (res) {
+            if (res.some(function (r) { return r.status === 'fulfilled'; })) { synced[t.id] = true; saveSynced(ym, synced); enviados++; }
+            else falhas++;
+          });
+      });
+    });
+  });
+  chain.then(function () {
+    // o que o Mac publicou para ESTE aparelho: config e meses
+    return comPrazo(pool.querySync(RELAYS, { kinds: [KIND], authors: [macPub()], '#p': [MINHA] }), 12000);
+  }).then(function (evs) {
+    var novaConfig = null, meses = 0;
+    (evs || []).sort(function (a, b) { return a.created_at - b.created_at; }).forEach(function (ev) {
+      try {
+        var c = JSON.parse(NT.nip44.v2.decrypt(ev.content, conv));
+        if (c.f3 === 'config') novaConfig = c;
+        else if (c.f3 === 'mes' && c.ym) { saveRemote(c.ym, { ledger: c.ledger || [], forecast: c.forecast || [], gerado_em: c.gerado_em }); meses++; }
+        else if (c.f3 === 'pareado') saveCustom(LS_PAREADO, { pessoa: c.pessoa, dispositivo: c.dispositivo });
+      } catch (e) {}
+    });
+    if (novaConfig) aplicarConfig(novaConfig);
+    return meses;
+  }).catch(function () { return -1; }).then(function (meses) {
+    try { pool.close(RELAYS); } catch (e) {}
+    syncing = false; render();
+    if (silencioso && !enviados) return;
+    toast((enviados ? enviados + ' enviado(s) · ' : '') + (falhas ? falhas + ' ficou(aram) para depois · ' : '') +
+          (meses >= 0 ? 'Mac: ' + meses + ' mês(es)' : 'não baixei do Mac agora'));
+  });
+}
+
+/* a configuração do Mac chegou: guarda e refaz o que depende dela */
+function aplicarConfig(c) {
+  delete c.f3;
+  c.metaDescricao = CONFIG_MINIMA.metaDescricao;
+  saveCustom(LS_CONFIG, c);
+  CONFIG = c; CONFIG_DO_MAC = true; calcPct();
+  QUEM_OPTS[1].label = CONFIG.pessoas.felipe.nome; QUEM_OPTS[2].label = CONFIG.pessoas.natalia.nome;
+  buildOrcamentos(); buildContaSelect(); buildTagChips(); buildParaQuem(); updateRateioHint();
+}
+
+/* ---- pareamento: o QR do `device pair` traz #m=<chave do Mac>&p=<código> ---- */
+function nomePessoa(k) { return CONFIG.pessoas[k] ? CONFIG.pessoas[k].nome : k; }
+function deB64(t) { try { var b = atob(t.replace(/-/g, '+').replace(/_/g, '/')); return hex(Uint8Array.from(b, function (c) { return c.charCodeAt(0); })); } catch (e) { return ''; } }
+
+function lerFragmento() {
+  var f = new URLSearchParams(location.hash.slice(1));
+  history.replaceState(null, '', location.pathname);
+  var mac = f.get('m') ? deB64(f.get('m')) : f.get('mac');
+  var codigo = f.get('p') ? deB64(f.get('p')) : f.get('parear');
+  if (/^[0-9a-f]{64}$/.test(mac || '')) saveCustom(LS_MAC, mac);
+  var usados = loadCustom('nostr.codigos', []);
+  if (macPub() && codigo && usados.indexOf(codigo) < 0) {
+    saveCustom('nostr.codigos', usados.concat(codigo));
+    parear(codigo);
+  }
+}
+
+function parear(codigo) {
+  saveCustom(LS_PAREADO, null);
+  var desde = Math.floor(Date.now() / 1000) - 5, conv = conversa();
+  var pool = new NT.SimplePool();
+  openCfg();
+  var sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [macPub()], '#p': [MINHA], since: desde }, {
+    onevent: function (ev) {
+      try {
+        var c = JSON.parse(NT.nip44.v2.decrypt(ev.content, conv));
+        if (c.f3 === 'pareado' && ev.created_at >= desde) {
+          saveCustom(LS_PAREADO, { pessoa: c.pessoa, dispositivo: c.dispositivo });
+          sub.close(); openCfg(); toast('Pareado ✓'); sincronizar(true);
+        }
+      } catch (e) {}
+    }
+  });
+  var pedido = NT.finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
+    tags: [['d', aleatorio(16)], ['p', macPub()]],
+    content: NT.nip44.v2.encrypt(JSON.stringify({ f3: 'parear', codigo: codigo }), conv) }, unhex(SK));
+  Promise.allSettled(pool.publish(RELAYS, pedido));
+  setTimeout(function () { try { sub.close(); } catch (e) {} }, 600000);
+}
+
+/* ---- cartão do ⚙ ---- */
+function openCfg() {
+  var id = getIdent();
+  $('cfgStatus').innerHTML = !macPub() ? 'Não pareado.'
+    : id ? ('<strong>Pareado como ' + nomePessoa(id.pessoa) + ' · ' + id.dispositivo + ' ✓</strong>')
+         : 'Chave do Mac recebida; esperando o Mac confirmar o pareamento…';
+  var c = loadCustom(LS_CONFIG, null);
+  $('cfgInfo').textContent = 'Configuração do Mac: ' + (c ? 'recebida' : 'ainda não (chega no primeiro sincronizar)') +
+    ' · este aparelho: ' + MINHA.slice(0, 12) + '…';
+  $('cfgCard').hidden = false;
+}
+function closeCfg() { $('cfgCard').hidden = true; }
+
+/* ---- botão Sincronizar (mostra quantos faltam subir) ---- */
+function pendingCount() {
+  return mesesLocais().reduce(function (n, ym) {
+    var synced = getSynced(ym);
+    return n + loadMonth(ym).filter(function (t) { return !synced[t.id]; }).length;
+  }, 0);
+}
+function setSyncBusy(label) { var b = $('btnSync'); if (b) { b.textContent = label; b.disabled = true; } }
+function updateSyncBtn() {
+  var b = $('btnSync'); if (!b) return;
+  b.disabled = false;
+  var n = pendingCount(currentMonth());
+  b.textContent = n ? ('Sincronizar (' + n + ' a enviar)') : 'Sincronizar';
+}
+
+/* ---- une o que o Mac confirmou (livro + previsto) com o que está neste aparelho ----
+ * origem: 'remoto' (no livro do Mac), 'previsto' (previsão do Mac), 'local' (daqui).
+ * Local pendente = ainda não saiu; local enviado = saiu, e espera o Mac confirmar.
+ * O local vence o remoto de mesmo id enquanto não for confirmado: confirmar a
+ * visita da diarista aqui não pode sumir atrás da previsão que veio do Mac. */
+function mergedTxs(ym) {
+  var local = loadMonth(ym);
+  var remoteDoc = getRemote(ym) || {};
+  var synced = getSynced(ym);
+  var noLivro = {}, out = [], visto = {};
+  (remoteDoc.ledger || []).forEach(function (t) { noLivro[t.id] = t; });
+  local.forEach(function (t) {
+    var r = noLivro[t.id];
+    var confirmado = r && JSON.stringify(Object.assign({}, r, { registrado_por: 0, confirmado_em: 0 })) ===
+                          JSON.stringify(Object.assign({}, t, { registrado_por: 0, confirmado_em: 0 }));
+    if (r && (confirmado || synced[t.id] && r.confirmado_em)) return;   // o Mac já tem: fica o dele
+    visto[t.id] = true;
+    out.push({ tx: t, origem: 'local', pendente: !synced[t.id] });
+  });
+  (remoteDoc.ledger || []).forEach(function (t) { if (!visto[t.id]) { visto[t.id] = true; out.push({ tx: t, origem: 'remoto' }); } });
+  (remoteDoc.forecast || []).forEach(function (t) {
+    if (!visto[t.id] && !t.realizado_por) { visto[t.id] = true; out.push({ tx: t, origem: 'previsto' }); }
+  });
+  return out;
+}
+
+function mkBadge(text, variant) {
+  var b = document.createElement('span');
+  b.className = 'badge' + (variant ? ' ' + variant : '');
+  b.textContent = text;
+  return b;
+}
+
+/* ===================== apps / navegação ===================== */
+var SCREENS = ['home', 'gasto', 'agua', 'diarista'];
+function showScreen(name) {
+  SCREENS.forEach(function (s) { var el = $('screen-' + s); if (el) el.hidden = (s !== name); });
+  $('backBtn').hidden = (name === 'home');
+  if (name === 'gasto') render();
+  if (name === 'diarista') renderDiarista();
+  if (name === 'agua') renderAgua();
+  window.scrollTo(0, 0);
+}
+
+var DIAS_SEM = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+function weekdayLabel(iso) {
+  var p = iso.split('-');
+  return DIAS_SEM[new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getDay()];
+}
+
+/* upsert local por id + reabre p/ re-sync se a id já tinha subido (ex.: confirmar previsão) */
+function upsertLocal(ym, tx) {
+  var txs = loadMonth(ym), found = false;
+  for (var i = 0; i < txs.length; i++) { if (txs[i].id === tx.id) { txs[i] = tx; found = true; break; } }
+  if (!found) txs.push(tx);
+  saveMonth(ym, txs);
+  var synced = getSynced(ym);
+  if (synced[tx.id]) { delete synced[tx.id]; saveSynced(ym, synced); }
+}
+
+/* ---- app Diarista: preset R$150/visita; id determinístico por dia → upsert sobre a previsão ---- */
+var diaState = { pago: true };
+
+function addDiaria() {
+  var err = $('diaErr');
+  var data = $('diaData').value;
+  var valor = parseValor($('diaValor').value);
+  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
+  if (!isFinite(valor)) { err.style.display = 'block'; err.textContent = 'Valor inválido — use 150,00.'; return; }
+  err.style.display = 'none';
+  var ym = data.slice(0, 7);
+  upsertLocal(ym, {
+    id: data + '-diarista', data: data, descricao: 'Diarista', valor: valor,
+    conta: 'c6', forma: 'pix', pago: diaState.pago, quem_pagou: 'conjunta',
+    tags: ['servicos'], orcamento: 'APARTAMENTO.DIARISTA', rateio: 'meio', para_quem: 'todos', origem: 'jotter'
+  });
+  renderDiarista();
+  toast('Visita registrada');
+}
+
+function renderDiarista() {
+  var ym = ($('diaData').value || todayISO()).slice(0, 7);
+  $('diaMonthTitle').textContent = 'Visitas — ' + labelMes(ym);
+  var rows = mergedTxs(ym).filter(function (m) { return m.tx.orcamento === 'APARTAMENTO.DIARISTA'; })
+    .sort(function (a, b) { return a.tx.data < b.tx.data ? -1 : a.tx.data > b.tx.data ? 1 : 0; });
+
+  var pagas = 0, totalPago = 0;
+  rows.forEach(function (m) { if (m.tx.pago && typeof m.tx.valor === 'number') { pagas++; totalPago += m.tx.valor; } });
+  $('diaTotal').textContent = rows.length ? (pagas + '× · ' + fmtBRL(Math.round(totalPago * 100) / 100)) : '';
+
+  var list = $('diaList'); list.textContent = '';
+  if (!rows.length) {
+    var e = document.createElement('div'); e.className = 'empty';
+    e.textContent = 'Nenhuma visita/previsão em ' + labelMes(ym) + '.';
+    list.appendChild(e); return;
+  }
+  rows.forEach(function (m) {
+    var t = m.tx;
+    var row = document.createElement('div'); row.className = 'tx';
+    var info = document.createElement('div'); info.className = 'info';
+    var d1 = document.createElement('div'); d1.className = 'desc';
+    d1.textContent = t.data.slice(8) + '/' + t.data.slice(5, 7) + ' · ' + weekdayLabel(t.data);
+    d1.appendChild(document.createTextNode(' '));
+    d1.appendChild(mkBadge(t.pago ? 'veio' : 'previsto', t.pago ? 'mine' : ''));
+    var d2 = document.createElement('div'); d2.className = 'meta'; d2.textContent = 'rateio meio · conjunta';
+    info.appendChild(d1); info.appendChild(d2);
+    var val = document.createElement('div');
+    val.className = 'val' + (t.pago ? '' : ' pend');
+    val.textContent = typeof t.valor === 'number' ? fmtBRL(t.valor) : '—';
+    row.appendChild(info); row.appendChild(val);
+    if (!t.pago) {  // confirmar previsão → vira "veio"
+      var ok = document.createElement('button');
+      ok.className = 'rm'; ok.type = 'button'; ok.textContent = '✓';
+      ok.style.color = 'var(--green)';
+      ok.setAttribute('aria-label', 'Confirmar visita de ' + t.data);
+      ok.addEventListener('click', function () {
+        var t2 = {}; for (var k in t) t2[k] = t[k];
+        t2.pago = true; t2.origem = 'manual';
+        if (t2.valor === null || t2.valor === undefined)  // previsão não tinha valor real
+          t2.valor = (typeof t2.estimativa === 'number' ? t2.estimativa : 150);
+        upsertLocal(ym, t2); renderDiarista(); toast('Confirmada');
+      });
+      row.appendChild(ok);
+    }
+    list.appendChild(row);
+  });
+}
+
+/* ---- app Água: tally de galões → 1 despesa/mês (itens[]); vence dia 10 do mês seguinte ---- */
+var LS_AGUA_PRECO = 'f3budget.jotter.agua.preco';
+var agState = { tamanho: 10, qtd: 1 };
+
+function cloneObj(o) { var r = {}; for (var k in o) r[k] = o[k]; return r; }
+function fmtData(iso) { return iso.slice(8) + '/' + iso.slice(5, 7); }
+function aguaPreco() { return loadCustom(LS_AGUA_PRECO, { '10': 11.10, '20': 20.00 }); }
+
+/* vencimento = dia 10 do mês seguinte ao consumo */
+function aguaVenc(ym) {
+  var p = ym.split('-'), y = Number(p[0]), m = Number(p[1]) + 1;
+  if (m > 12) { m = 1; y += 1; }
+  return y + '-' + String(m).padStart(2, '0') + '-10';
+}
+
+function aguaTxOf(ym) {
+  var txs = loadMonth(ym);
+  for (var i = 0; i < txs.length; i++) if (txs[i].id === ym + '-agua-mineral') return txs[i];
+  return null;
+}
+function aguaItems(ym) { var t = aguaTxOf(ym); return (t && t.itens) ? t.itens.slice() : []; }
+
+function saveAguaItems(ym, items) {
+  var idAgua = ym + '-agua-mineral';
+  if (!items.length) {  // sem pedidos → tira a despesa do mês
+    saveMonth(ym, loadMonth(ym).filter(function (t) { return t.id !== idAgua; }));
+    var s = getSynced(ym); if (s[idAgua]) { delete s[idAgua]; saveSynced(ym, s); }
+    return;
+  }
+  var valor = Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100;
+  var ex = aguaTxOf(ym);
+  var tx = ex ? cloneObj(ex) : {
+    id: idAgua, data: ym + '-01', descricao: 'Água mineral (galões)',
+    conta: 'c6', forma: 'debito', pago: false, quem_pagou: 'conjunta',
+    tags: ['alimentacao'], orcamento: 'APARTAMENTO.AGUA_MINERAL', rateio: 'meio', para_quem: 'todos',
+    vencimento: aguaVenc(ym), origem: 'consumo',
+    obs: 'Tally de galões (app Água). Vence dia 10 do mês seguinte; a despesa é do mês de consumo.'
+  };
+  tx.itens = items; tx.valor = valor;
+  if (!tx.vencimento) tx.vencimento = aguaVenc(ym);
+  upsertLocal(ym, tx);
+}
+
+function addAgua() {
+  var err = $('agErr'); err.style.display = 'none';
+  var data = $('agData').value;
+  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
+  var preco = aguaPreco(), unit = Number(preco[String(agState.tamanho)]);
+  if (!isFinite(unit) || unit <= 0) { err.style.display = 'block'; err.textContent = 'Defina o preço do galão ' + agState.tamanho + 'L.'; return; }
+  var qtd = agState.qtd, tam = agState.tamanho;
+  var items = aguaItems(data.slice(0, 7));
+  items.push({
+    data: data, descricao: qtd + '× galão ' + tam + 'L', tipo: 'produto',
+    quantidade: qtd, tamanho: tam, preco_unitario: unit, valor: Math.round(unit * qtd * 100) / 100
+  });
+  items.sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0; });
+  saveAguaItems(data.slice(0, 7), items);
+  renderAgua();
+  toast(qtd + ' galão(ões) ' + tam + 'L');
+}
+
+function removeAguaItem(ym, idx) {
+  var items = aguaItems(ym);
+  items.splice(idx, 1);
+  saveAguaItems(ym, items);
+  renderAgua();
+}
+
+function renderAgua() {
+  var ym = ($('agData').value || todayISO()).slice(0, 7);
+  $('agMonthTitle').textContent = 'Conta — ' + labelMes(ym);
+  var items = aguaItems(ym);
+  var total = Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100;
+  var galoes = items.reduce(function (a, it) { return a + (it.quantidade || 0); }, 0);
+  var t = aguaTxOf(ym);
+  $('agTotal').textContent = items.length ? fmtBRL(total) : '';
+  $('agVenc').textContent = items.length
+    ? (galoes + ' galões · vence ' + fmtData(aguaVenc(ym)) + (t && t.pago ? ' · já paga' : ''))
+    : '';
+
+  var list = $('agList'); list.textContent = '';
+  if (!items.length) {
+    var e = document.createElement('div'); e.className = 'empty';
+    e.textContent = 'Nenhum pedido em ' + labelMes(ym) + '.'; list.appendChild(e); return;
+  }
+  items.forEach(function (it, idx) {
+    var row = document.createElement('div'); row.className = 'tx';
+    var info = document.createElement('div'); info.className = 'info';
+    var d1 = document.createElement('div'); d1.className = 'desc';
+    d1.textContent = it.descricao || (it.quantidade + '× galão ' + it.tamanho + 'L');
+    var d2 = document.createElement('div'); d2.className = 'meta';
+    d2.textContent = fmtData(it.data) + ' · ' + fmtBRL(it.preco_unitario) + '/galão';
+    info.appendChild(d1); info.appendChild(d2);
+    var val = document.createElement('div'); val.className = 'val'; val.textContent = fmtBRL(it.valor);
+    var rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.textContent = '✕';
+    rm.setAttribute('aria-label', 'Remover pedido');
+    rm.addEventListener('click', (function (index) {
+      return function () { if (confirm('Remover este pedido?')) removeAguaItem(ym, index); };
+    })(idx));
+    row.appendChild(info); row.appendChild(val); row.appendChild(rm);
+    list.appendChild(row);
+  });
+}
+
+function loadAguaPrices() {
+  var p = aguaPreco();
+  $('agP10').value = String(p['10']).replace('.', ',');
+  $('agP20').value = String(p['20']).replace('.', ',');
+}
+function onAguaPriceChange() {
+  var p10 = parseValor($('agP10').value), p20 = parseValor($('agP20').value);
+  if (isFinite(p10) && isFinite(p20)) { saveCustom(LS_AGUA_PRECO, { '10': p10, '20': p20 }); renderAgua(); }
+}
+
+/* ========================= lista do mês ========================= */
+
+function rateioLabel(r) {
+  if (typeof r === 'object' && r !== null) return 'split';
+  return { casal: 'casal', meio: 'meio', felipe: 'Felipe', natalia: 'Natália' }[r] || r;
+}
+
+var FORMA_LABELS = { credito: 'crédito', debito: 'débito', pix: 'pix', dinheiro: 'dinheiro' };
+function formaLabel(f) { return FORMA_LABELS[f] || f || ''; }
+
+function quemLabel(q) {
+  if (q === 'conjunta') return 'Conjunta';
+  return CONFIG.pessoas[q] ? CONFIG.pessoas[q].nome : q;
+}
+
+function render() {
+  var ym = currentMonth();
+  var merged = mergedTxs(ym).sort(function (a, b) {
+    return a.tx.data < b.tx.data ? -1 : a.tx.data > b.tx.data ? 1 : 0;
+  });
+
+  $('monthTitle').textContent = 'Lançamentos — ' + labelMes(ym);
+
+  var total = 0;
+  merged.forEach(function (m) { if (typeof m.tx.valor === 'number') total += m.tx.valor; });
+  $('monthTotal').textContent = merged.length ? fmtBRL(Math.round(total * 100) / 100) : '';
+
+  var list = $('txList');
+  list.textContent = '';
+  if (!merged.length) {
+    var e = document.createElement('div');
+    e.className = 'empty';
+    e.textContent = 'Nenhum lançamento em ' + labelMes(ym) + '.';
+    list.appendChild(e);
+    updateSyncBtn();
+    return;
+  }
+
+  var ident = getIdent() || {};
+  var contasMap = allContas();
+  merged.forEach(function (m) {
+    var t = m.tx;
+    var row = document.createElement('div');
+    row.className = 'tx';
+
+    var info = document.createElement('div');
+    info.className = 'info';
+
+    var d1 = document.createElement('div');
+    d1.className = 'desc';
+    d1.textContent = t.descricao;
+    // proveniência: quem digitou (remoto) ou "a enviar" (rascunho local)
+    if (m.origem === 'remoto' && t.registrado_por) {
+      var mine = ident.dispositivo && t.registrado_por.dispositivo === ident.dispositivo;
+      d1.appendChild(document.createTextNode(' '));
+      d1.appendChild(mkBadge(mine ? '☁ você' : '☁ ' + nomePessoa(t.registrado_por.pessoa), mine ? 'mine' : 'cloud'));
+    } else if (m.origem === 'local' && m.pendente) {
+      d1.appendChild(document.createTextNode(' '));
+      d1.appendChild(mkBadge('⬆ enviar', 'up'));
+    } else if (m.origem === 'local') {
+      d1.appendChild(document.createTextNode(' '));
+      d1.appendChild(mkBadge('✉ no Mac', 'cloud'));    // enviado; o Mac ainda não confirmou
+    } else if (m.origem === 'previsto') {
+      d1.appendChild(document.createTextNode(' '));
+      d1.appendChild(mkBadge('previsto', ''));
+    }
+    if (!t.pago) {
+      d1.appendChild(document.createTextNode(' '));
+      d1.appendChild(mkBadge('não pago', ''));   // status do gasto (≠ sync); "quanto ainda vamos gastar"
+    }
+
+    var d2 = document.createElement('div');
+    d2.className = 'meta';
+    d2.textContent = t.data.slice(8) + '/' + t.data.slice(5, 7) +
+      ' · ' + (t.orcamento || 'a classificar') +
+      ' · ' + rateioLabel(t.rateio) +
+      ' · ' + (contasMap[t.conta] ? contasMap[t.conta].nome : t.conta) +
+      ' · ' + formaLabel(t.forma) +
+      ' · pagou: ' + quemLabel(t.quem_pagou);
+
+    info.appendChild(d1);
+    info.appendChild(d2);
+
+    if (t.tags && t.tags.length) {
+      var tg = document.createElement('div');
+      tg.className = 'minichips';
+      t.tags.forEach(function (tag) {
+        var c = document.createElement('span');
+        c.className = 'minichip';
+        c.textContent = tag;
+        tg.appendChild(c);
+      });
+      info.appendChild(tg);
+    }
+
+    var val = document.createElement('div');
+    val.className = 'val' + (typeof t.valor === 'number' && t.valor < 0 ? ' neg' : '') + (t.pago ? '' : ' pend');
+    val.textContent = typeof t.valor === 'number' ? fmtBRL(t.valor) : '—';
+
+    row.appendChild(info);
+    row.appendChild(val);
+
+    // remover só o que ainda é rascunho local (não enviado). O que já está no
+    // servidor não se apaga do aparelho (deleção server-side fica p/ depois).
+    if (m.origem === 'local' && m.pendente) {
+      var rm = document.createElement('button');
+      rm.className = 'rm';
+      rm.type = 'button';
+      rm.textContent = '✕';
+      rm.setAttribute('aria-label', 'Remover ' + t.descricao);
+      rm.addEventListener('click', function () {
+        if (confirm('Remover "' + t.descricao + '"?')) removeTx(ym, t.id);
+      });
+      row.appendChild(rm);
+    }
+
+    list.appendChild(row);
+  });
+
+  updateSyncBtn();
+}
+
+/* ==================== saída: JSON do contrato ==================== */
+
+function buildFileJSON(ym) {
+  var txs = loadMonth(ym).slice().sort(function (a, b) {
+    return a.data < b.data ? -1 : a.data > b.data ? 1 : 0;
+  });
+  var file = {
+    meta: {
+      mes: ym,
+      descricao: CONFIG.metaDescricao,
+      atualizado: todayISO()
+    },
+    transacoes: txs
+  };
+  return JSON.stringify(file, null, 2) + '\n';
+}
+
+function copyJSON() {
+  var ym = currentMonth();
+  var json = buildFileJSON(ym);
+  function ok() { toast('JSON de ' + ym + ' copiado'); }
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = json;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); ok(); } catch (e) { toast('Não deu p/ copiar — use Baixar'); }
+    document.body.removeChild(ta);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(json).then(ok, fallback);
+  } else {
+    fallback();
+  }
+}
+
+function downloadJSON() {
+  var ym = currentMonth();
+  var blob = new Blob([buildFileJSON(ym)], { type: 'application/json' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = ym + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+}
+
+/* ============================ toast ============================ */
+
+var toastTimer = null;
+function toast(msg) {
+  var t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 1800);
+}
+
+/* ============================ tema ============================ */
+
+function syncThemeBtn() {
+  $('themeBtn').textContent = document.documentElement.classList.contains('dark') ? '☀' : '🌙';
+}
+$('themeBtn').addEventListener('click', function () {
+  var dark = document.documentElement.classList.toggle('dark');
+  try { localStorage.setItem('f3budget.theme', dark ? 'dark' : 'light'); } catch (e) {}
+  syncThemeBtn();
+});
+
+/* ============================ init ============================ */
+
+var QUEM_OPTS = [
+  { value: 'conjunta', label: 'Conjunta' },
+  { value: 'felipe',   label: CONFIG.pessoas.felipe.nome },
+  { value: 'natalia',  label: CONFIG.pessoas.natalia.nome }
+];
+var FORMA_SEG_LABELS = { credito: 'Crédito', debito: 'Débito', pix: 'Pix', dinheiro: 'Dinheiro' };
+
+$('fData').value = todayISO();
+buildOrcamentos();
+buildContaSelect();
+buildTagChips();
+$('fConta').addEventListener('change', onContaChange);
+buildSeg($('segForma'),
+  CONFIG.formas.map(function (f) { return { value: f, label: FORMA_SEG_LABELS[f] || f }; }),
+  function () { return state.forma; }, function (v) { state.forma = v; });
+buildSeg($('segQuem'), QUEM_OPTS,
+  function () { return state.quem_pagou; }, function (v) { state.quem_pagou = v; });
+buildSeg($('segPago'),
+  [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
+  function () { return state.pago; }, function (v) { state.pago = v; });
+buildSeg($('segRateio'),
+  [{ value: 'casal', label: 'Casal' }, { value: 'meio', label: 'Meio' },
+   { value: 'felipe', label: 'Felipe' }, { value: 'natalia', label: 'Natália' }],
+  function () { return state.rateio; }, function (v) { state.rateio = v; updateRateioHint(); });
+
+$('fValor').addEventListener('input', updateRateioHint);
+$('fData').addEventListener('change', render);
+$('txForm').addEventListener('submit', addTx);
+$('btnCopy').addEventListener('click', copyJSON);
+$('btnDownload').addEventListener('click', downloadJSON);
+
+/* sync (passo 2) */
+$('cfgBtn').addEventListener('click', function () {
+  var c = $('cfgCard');
+  if (c.hidden) openCfg(); else closeCfg();
+});
+$('cfgClose').addEventListener('click', closeCfg);
+$('btnSync').addEventListener('click', function () { sincronizar(false); });
+
+/* apps / navegação */
+$('backBtn').addEventListener('click', function () { showScreen('home'); });
+Array.prototype.forEach.call(document.querySelectorAll('.appicon'), function (b) {
+  b.addEventListener('click', function () { showScreen(b.getAttribute('data-app')); });
+});
+$('diaData').value = todayISO();
+$('diaData').addEventListener('change', renderDiarista);
+$('btnDiaAdd').addEventListener('click', addDiaria);
+buildSeg($('segDiaPago'),
+  [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
+  function () { return diaState.pago; }, function (v) { diaState.pago = v; });
+
+/* app Água */
+$('agData').value = todayISO();
+$('agData').addEventListener('change', renderAgua);
+$('btnAgAdd').addEventListener('click', addAgua);
+$('agP10').addEventListener('change', onAguaPriceChange);
+$('agP20').addEventListener('change', onAguaPriceChange);
+buildSeg($('segAgTam'),
+  [{ value: 10, label: '10L' }, { value: 20, label: '20L' }],
+  function () { return agState.tamanho; }, function (v) { agState.tamanho = v; });
+buildSeg($('segAgQtd'),
+  [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }],
+  function () { return agState.qtd; }, function (v) { agState.qtd = v; });
+loadAguaPrices();
+
+syncThemeBtn();
+buildParaQuem();
+updateRateioHint();
+render();
+showScreen('home');
+$('versao').textContent = VERSAO;
+
+/* abre sem rede: o service worker guarda a página e a biblioteca */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(function () {});
+lerFragmento();
+/* o que ficou pendente sai sozinho quando a rede volta (e ao abrir, se houver rede) */
+window.addEventListener('online', function () { sincronizar(true); });
+if (macPub() && navigator.onLine) sincronizar(true);
 </script>
 </body>
 </html>
