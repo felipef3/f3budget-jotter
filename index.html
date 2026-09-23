@@ -69,7 +69,7 @@
 <script src="nostr-tools-2.25.2.js"></script>
 <script>
 'use strict'
-const VERSAO = 'fase 2 · 23/09/2026 · c'
+const VERSAO = 'fase 2 · 23/09/2026 · d'
 const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub']
 const KIND = 30078
@@ -134,7 +134,12 @@ async function parear(codigo) {
   const r = await Promise.allSettled(pool.publish(RELAYS, pedido))
   if (!r.some(x => x.status === 'fulfilled')) $('pareamento').innerHTML = '<span class="warn">sem rede para parear — tente com rede</span>'
 }
-if (mac && frag.get('parear')) parear(frag.get('parear')); else ouvirConfirmacao()
+// Código de QR já usado não pede de novo: reabrir a página pelo histórico do
+// Safari traz o endereço antigo, com o código, e ela reenviava o pedido.
+const usados = ler('nostr.codigos', [])
+const codigo = frag.get('parear')
+if (mac && codigo && !usados.includes(codigo)) { gravar('nostr.codigos', usados.concat(codigo)); parear(codigo) }
+else ouvirConfirmacao()
 
 // ---- lançamentos: {tx, d, enviado, relays} -------------------------------
 $('data').value = new Date().toLocaleDateString('sv')  // AAAA-MM-DD no fuso do aparelho
