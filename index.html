@@ -406,10 +406,6 @@ select {
     </div>
     <div id="txList"></div>
     <button class="btn btn-primary" id="btnSync" type="button" style="margin-top:14px;">Sincronizar</button>
-    <div class="btn-row">
-      <button class="btn btn-secondary" id="btnCopy" type="button">Copiar JSON</button>
-      <button class="btn btn-secondary" id="btnDownload" type="button">Baixar JSON</button>
-    </div>
   </section>
 
   <p class="footnote">Anota offline no aparelho; <strong>Sincronizar</strong> envia pelo Nostr (cifrado, só o Mac lê) e baixa o que o Mac já confirmou — o que você mandou fica «no Mac» até ele confirmar.</p>
@@ -485,7 +481,7 @@ select {
  * aparelho. Esta página é pública: nada da casa vem embutido. Antes do primeiro
  * sync, só o mínimo para a tela funcionar (sem contribuições nem rubricas).
  * ===================================================================== */
-var VERSAO = 'jotter · fatia 4 · 23/09/2026 · a';
+var VERSAO = 'jotter · fatia 4 · 23/09/2026 · b';
 var LS_CONFIG = 'f3budget.jotter.config';
 var CONFIG_MINIMA = {
   pessoas: { felipe: { nome: 'Felipe', contribuicao: 1 }, natalia: { nome: 'Natália', contribuicao: 1 } },
@@ -1397,55 +1393,8 @@ function render() {
   updateSyncBtn();
 }
 
-/* ==================== saída: JSON do contrato ==================== */
-
-function buildFileJSON(ym) {
-  var txs = loadMonth(ym).slice().sort(function (a, b) {
-    return a.data < b.data ? -1 : a.data > b.data ? 1 : 0;
-  });
-  var file = {
-    meta: {
-      mes: ym,
-      descricao: CONFIG.metaDescricao,
-      atualizado: todayISO()
-    },
-    transacoes: txs
-  };
-  return JSON.stringify(file, null, 2) + '\n';
-}
-
-function copyJSON() {
-  var ym = currentMonth();
-  var json = buildFileJSON(ym);
-  function ok() { toast('JSON de ' + ym + ' copiado'); }
-  function fallback() {
-    var ta = document.createElement('textarea');
-    ta.value = json;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); ok(); } catch (e) { toast('Não deu p/ copiar — use Baixar'); }
-    document.body.removeChild(ta);
-  }
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(json).then(ok, fallback);
-  } else {
-    fallback();
-  }
-}
-
-function downloadJSON() {
-  var ym = currentMonth();
-  var blob = new Blob([buildFileJSON(ym)], { type: 'application/json' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = ym + '.json';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-}
+/* Copiar/Baixar JSON saíram (23/09/2026): o jotter só anota e envia; qualquer
+   ajuste é feito no Mac, pela shell do f3budget. */
 
 /* ============================ toast ============================ */
 
@@ -1492,15 +1441,13 @@ buildSeg($('segPago'),
   [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
   function () { return state.pago; }, function (v) { state.pago = v; });
 buildSeg($('segRateio'),
-  [{ value: 'casal', label: 'Casal' }, { value: 'meio', label: 'Meio' },
+  [{ value: 'casal', label: 'Casal' },   // «Meio» saiu da tela (23/09/2026): o 50/50 fica para o Mac
    { value: 'felipe', label: 'Felipe' }, { value: 'natalia', label: 'Natália' }],
   function () { return state.rateio; }, function (v) { state.rateio = v; updateRateioHint(); });
 
 $('fValor').addEventListener('input', updateRateioHint);
 $('fData').addEventListener('change', render);
 $('txForm').addEventListener('submit', addTx);
-$('btnCopy').addEventListener('click', copyJSON);
-$('btnDownload').addEventListener('click', downloadJSON);
 
 /* sync (passo 2) */
 $('cfgBtn').addEventListener('click', function () {
