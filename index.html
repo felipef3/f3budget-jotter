@@ -69,7 +69,7 @@
 <script src="nostr-tools-2.25.2.js"></script>
 <script>
 'use strict'
-const VERSAO = 'fase 2 · 23/09/2026 · d'
+const VERSAO = 'fase 2 · 23/09/2026 · e'
 const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub']
 const KIND = 30078
@@ -94,6 +94,11 @@ const minha = getPublicKey(unhex(sk))
 
 const frag = new URLSearchParams(location.hash.slice(1))
 history.replaceState(null, '', location.pathname)
+// O QR do terminal manda a chave e o código em base64url (#m=…&p=…), mais curto
+// que hexadecimal: o QR cai da versão 8 para a 5 e cabe na altura do terminal.
+const deB64 = t => { try { const b = atob(t.replace(/-/g, '+').replace(/_/g, '/')); return hex(Uint8Array.from(b, c => c.charCodeAt(0))) } catch { return '' } }
+if (frag.get('m')) frag.set('mac', deB64(frag.get('m')))
+if (frag.get('p')) frag.set('parear', deB64(frag.get('p')))
 if (/^[0-9a-f]{64}$/.test(frag.get('mac') || '')) gravar('nostr.mac', frag.get('mac'))
 const mac = ler('nostr.mac', null)
 const conversa = () => nip44.v2.utils.getConversationKey(unhex(sk), mac)
