@@ -6,7 +6,7 @@
 // A versão 2 guardava primeiro e servia o guardado — e, pior, enchia o guardado
 // pelo cache HTTP do navegador, que ainda tinha a página velha (23/09/2026).
 // Por isso tudo aqui é buscado com `cache: 'reload'`, que passa por cima dele.
-const VERSAO = 'jotter-2026-09-23-5'
+const VERSAO = 'jotter-2026-09-23-6'
 const ARQUIVOS = ['./', './index.html', './nostr-tools-2.25.2.js', './manifest.webmanifest', './icone-180.png']
 const PRAZO_REDE = 3000
 
@@ -25,7 +25,11 @@ self.addEventListener('activate', e => {
 function daRede(req) {
   return new Promise((ok, falha) => {
     const t = setTimeout(() => falha(new Error('rede lenta')), PRAZO_REDE)
-    fetch(req, { cache: 'reload' }).then(r => {
+    // Pela URL, e não pelo pedido: um pedido de navegação não aceita opções
+    // (`fetch(req, {cache})` falha na hora), e até a versão 5 a página caía
+    // SEMPRE no guardado — a publicação nova só chegava quando o service worker
+    // se reinstalava (23/09/2026).
+    fetch(req.url, { cache: 'reload', credentials: 'same-origin' }).then(r => {
       clearTimeout(t)
       if (!r.ok) return falha(new Error('status ' + r.status))
       const copia = r.clone()

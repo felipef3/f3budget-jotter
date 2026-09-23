@@ -69,7 +69,7 @@
 <script src="nostr-tools-2.25.2.js"></script>
 <script>
 'use strict'
-const VERSAO = 'fase 2 · 23/09/2026 · e'
+const VERSAO = 'fase 2 · 23/09/2026 · f'
 const { generateSecretKey, getPublicKey, finalizeEvent, nip44, SimplePool } = window.NostrTools
 const RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub']
 const KIND = 30078
@@ -114,12 +114,16 @@ mostrarPareamento()
 // ---- pareamento, pelo Nostr --------------------------------------------
 // A confirmação do Mac é ouvida separada do pedido, e de novo a cada abertura
 // enquanto não chegar: o Mac pode confirmar depois, com a página fechada.
-function ouvirConfirmacao() {
+// `desde`: ao parear de novo, só vale confirmação posterior ao pedido — antes,
+// a confirmação do pareamento anterior fazia a página dizer «pareado» sem o Mac
+// ter respondido nada (23/09/2026).
+function ouvirConfirmacao(desde) {
   if (!mac || ler('nostr.pareado', null)) return
+  desde = desde ?? ler('nostr.pedido_em', Math.floor(Date.now() / 1000) - 86400)
   const pool = new SimplePool()
-  const sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [mac], '#p': [minha],
-                                           since: Math.floor(Date.now() / 1000) - 86400 }, {
+  const sub = pool.subscribeMany(RELAYS, { kinds: [KIND], authors: [mac], '#p': [minha], since: desde }, {
     onevent(ev) {
+      if (ev.created_at < desde) return
       try {
         const c = JSON.parse(nip44.v2.decrypt(ev.content, conversa()))
         if (c.f3 === 'pareado') { gravar('nostr.pareado', { pessoa: c.pessoa, dispositivo: c.dispositivo }); mostrarPareamento(); sub.close() }
@@ -131,7 +135,9 @@ function ouvirConfirmacao() {
 
 async function parear(codigo) {
   gravar('nostr.pareado', null); mostrarPareamento()
-  ouvirConfirmacao()
+  const pedidoEm = Math.floor(Date.now() / 1000) - 5
+  gravar('nostr.pedido_em', pedidoEm)
+  ouvirConfirmacao(pedidoEm)
   const pool = new SimplePool()
   const pedido = finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
     tags: [['d', aleatorio(16)], ['p', mac]],
