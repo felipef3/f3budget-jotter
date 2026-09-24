@@ -329,6 +329,13 @@ select {
     <h2>Novo lançamento</h2>
     <form id="txForm" autocomplete="off">
       <div class="field">
+        <label for="fContainer">Onde estou (container)</label>
+        <input type="text" id="fContainer" list="dlContainers" placeholder="casa" autocapitalize="none" spellcheck="false" enterkeyhint="next">
+        <datalist id="dlContainers"></datalist>
+        <div class="hint" id="containerHint"></div>
+      </div>
+
+      <div class="field">
         <label for="fDescricao">Item / descrição</label>
         <input type="text" id="fDescricao" placeholder="ex.: Feira, Farmácia, Almoço…" enterkeyhint="next">
       </div>
@@ -342,6 +349,12 @@ select {
           <label for="fData">Data</label>
           <input type="date" id="fData">
         </div>
+      </div>
+
+      <div class="field">
+        <label for="fLocal">Local (opcional)</label>
+        <input type="text" id="fLocal" list="dlLocais" placeholder="ex.: Armazém Guimarães" enterkeyhint="next">
+        <datalist id="dlLocais"></datalist>
       </div>
 
       <div class="field">
@@ -398,6 +411,16 @@ select {
     </form>
   </section>
 
+  <!-- ===== O previsto do container onde estou (5c): confirmar com um toque ===== -->
+  <section class="card" id="prevCard" hidden>
+    <div class="month-head">
+      <h2 id="prevTitle">Previsto aqui</h2>
+      <div class="month-total" id="prevTotal"></div>
+    </div>
+    <p class="hint">O que o Mac previu para este container no mês. Aconteceu? Corrija o valor, se mudou, e toque ✓.</p>
+    <div id="prevList"></div>
+  </section>
+
   <!-- ===== Lançamentos do mês ===== -->
   <section class="card">
     <div class="month-head">
@@ -447,7 +470,7 @@ select {
     <section class="card">
       <h2>Diarista</h2>
       <p class="hint">Padrão: <strong>R$ 150</strong> por visita · rateio meio · conta conjunta. Vem terça e
-      quinta (já lançado como previsão). Registre aqui quando ela vier — confirma o dia.</p>
+      sexta (as visitas vêm previstas do Mac). Registre aqui quando ela vier — confirma o dia.</p>
       <div class="row2">
         <div class="field"><label for="diaData">Data</label><input type="date" id="diaData"></div>
         <div class="field"><label for="diaValor">Valor (R$)</label><input type="text" id="diaValor" inputmode="decimal" value="150,00"></div>
@@ -481,7 +504,7 @@ select {
  * aparelho. Esta página é pública: nada da casa vem embutido. Antes do primeiro
  * sync, só o mínimo para a tela funcionar (sem contribuições nem rubricas).
  * ===================================================================== */
-var VERSAO = 'jotter · fatia 4 · 23/09/2026 · b';
+var VERSAO = 'jotter · fatia 5c · 24/09/2026';
 var LS_CONFIG = 'f3budget.jotter.config';
 var CONFIG_MINIMA = {
   pessoas: { felipe: { nome: 'Felipe', contribuicao: 1 }, natalia: { nome: 'Natália', contribuicao: 1 } },
@@ -835,6 +858,9 @@ function addTx(ev) {
     para_quem: state.para_quem,
     origem: 'jotter'
   };
+  var onde = ondeAtual(), local = $('fLocal').value.trim();
+  if (onde !== 'casa') tx.container = onde;       // sem o campo, é casa (contrato v3)
+  if (local) { tx.local = local; lembrarLocal(local); }
   var nota = $('fObs').value.trim();
   if (nota) tx.notas = [{ texto: nota, autor: (getIdent() || {}).pessoa || 'jotter',
                           em: new Date().toISOString(), claude: $('fClaude').checked }];
@@ -849,6 +875,7 @@ function addTx(ev) {
   $('fObs').value = '';
   $('fClaude').checked = false;
   updateRateioHint();
+  buildContainers();
   render();
   toast('Adicionado');
   $('fDescricao').focus();
@@ -959,6 +986,7 @@ function aplicarConfig(c) {
   CONFIG = c; CONFIG_DO_MAC = true; calcPct();
   QUEM_OPTS[1].label = CONFIG.pessoas.felipe.nome; QUEM_OPTS[2].label = CONFIG.pessoas.natalia.nome;
   buildOrcamentos(); buildContaSelect(); buildTagChips(); buildParaQuem(); updateRateioHint();
+  buildContainers(); buildLocais(); render();
 }
 
 /* ---- pareamento: o QR do `device pair` traz #m=<chave do Mac>&p=<código> ---- */
@@ -1050,7 +1078,7 @@ function mergedTxs(ym) {
   });
   (remoteDoc.ledger || []).forEach(function (t) { if (!visto[t.id]) { visto[t.id] = true; out.push({ tx: t, origem: 'remoto' }); } });
   (remoteDoc.forecast || []).forEach(function (t) {
-    if (!visto[t.id] && !t.realizado_por) { visto[t.id] = true; out.push({ tx: t, origem: 'previsto' }); }
+    if (!visto[t.id] && !t.realizado_por && !t.cancelada) { visto[t.id] = true; out.push({ tx: t, origem: 'previsto' }); }
   });
   return out;
 }
@@ -1100,11 +1128,15 @@ function addDiaria() {
   if (!isFinite(valor)) { err.style.display = 'block'; err.textContent = 'Valor inválido — use 150,00.'; return; }
   err.style.display = 'none';
   var ym = data.slice(0, 7);
-  upsertLocal(ym, {
+  var tx = {
     id: data + '-diarista', data: data, descricao: 'Diarista', valor: valor,
     conta: 'c6', forma: 'pix', pago: diaState.pago, quem_pagou: 'conjunta',
     tags: ['servicos'], orcamento: 'APARTAMENTO.DIARISTA', rateio: 'meio', para_quem: 'todos', origem: 'jotter'
-  });
+  };
+  // havendo a visita prevista pelo Mac nesse dia, o lançamento a realiza (o commit liga os dois)
+  if (((getRemote(ym) || {}).forecast || []).some(function (p) { return p.id === tx.id && !p.cancelada; }))
+    tx.realiza = tx.id;
+  upsertLocal(ym, tx);
   renderDiarista();
   toast('Visita registrada');
 }
@@ -1146,7 +1178,8 @@ function renderDiarista() {
       ok.setAttribute('aria-label', 'Confirmar visita de ' + t.data);
       ok.addEventListener('click', function () {
         var t2 = {}; for (var k in t) t2[k] = t[k];
-        t2.pago = true; t2.origem = 'manual';
+        t2.pago = true; t2.origem = 'jotter';
+        if (m.origem === 'previsto') t2.realiza = t.id;   // o commit no Mac liga à previsão
         if (t2.valor === null || t2.valor === undefined)  // previsão não tinha valor real
           t2.valor = (typeof t2.estimativa === 'number' ? t2.estimativa : 150);
         upsertLocal(ym, t2); renderDiarista(); toast('Confirmada');
@@ -1286,8 +1319,128 @@ function quemLabel(q) {
   return CONFIG.pessoas[q] ? CONFIG.pessoas[q].nome : q;
 }
 
+/* ===================== onde estou (5c) =====================
+ * O container é uma pasta, e o caminho é o nome (`casa/jantar-riomar`); sem ele, `casa`.
+ * A lista vem do Mac (config); um nome novo vai no lançamento e o Mac o adota no commit.
+ * «Onde estou» fica guardado: na viagem, tudo o que se lança cai nela até mudar. */
+var LS_ONDE = 'f3budget.jotter.onde', LS_LOCAIS = 'f3budget.jotter.locais';
+
+function normContainer(s) {
+  var partes = String(s || '').split('/').map(function (p) {
+    return p.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace(/^[0-9-]+/, '');
+  }).filter(Boolean).slice(0, 3);
+  return partes.length ? partes.join('/') : 'casa';
+}
+function ondeAtual() { return normContainer($('fContainer').value); }
+
+function todosContainers() {
+  var cs = { casa: true };
+  Object.keys(CONFIG.containers || {}).forEach(function (c) { cs[c] = true; });
+  mesesLocais().forEach(function (ym) {
+    loadMonth(ym).forEach(function (t) { if (t.container) cs[t.container] = true; });
+  });
+  return Object.keys(cs).sort();
+}
+
+function buildContainers() {
+  var dl = $('dlContainers'); dl.textContent = '';
+  todosContainers().forEach(function (c) { var o = document.createElement('option'); o.value = c; dl.appendChild(o); });
+  var c = ondeAtual();
+  $('containerHint').textContent = todosContainers().indexOf(c) >= 0 ? ''
+    : 'novo: «' + c + '» — o Mac cria quando confirmar';
+}
+
+function onContainerChange() {
+  var c = ondeAtual();
+  $('fContainer').value = c;
+  saveCustom(LS_ONDE, c);
+  buildContainers();
+  render();
+}
+
+function todosLocais() {
+  var ls = {};
+  loadCustom(LS_LOCAIS, []).forEach(function (l) { ls[l] = true; });
+  for (var i = 0; i < localStorage.length; i++) {
+    var k = localStorage.key(i);
+    if (k.indexOf(LS_REMOTE) !== 0) continue;
+    var doc = loadCustom(k, {}) || {};
+    (doc.ledger || []).concat(doc.forecast || []).forEach(function (t) { if (t.local) ls[t.local] = true; });
+  }
+  return Object.keys(ls).sort();
+}
+function lembrarLocal(l) {
+  var ls = loadCustom(LS_LOCAIS, []);
+  if (ls.indexOf(l) < 0) { ls.push(l); saveCustom(LS_LOCAIS, ls); }
+  buildLocais();
+}
+function buildLocais() {
+  var dl = $('dlLocais'); dl.textContent = '';
+  todosLocais().forEach(function (l) { var o = document.createElement('option'); o.value = l; dl.appendChild(o); });
+}
+
+/* ---- o previsto do container onde estou: um toque confirma, ou corrige o valor antes ----
+ * Confirmar é lançar com o MESMO id da previsão e `realiza: <id>`: o commit no Mac liga
+ * os dois e a previsão sai de «quanto falta». */
+function previstoAqui(ym) {
+  var c = ondeAtual(), local = {};
+  loadMonth(ym).forEach(function (t) { local[t.id] = true; if (t.realiza) local[t.realiza] = true; });
+  return ((getRemote(ym) || {}).forecast || []).filter(function (t) {
+    return !t.realizado_por && !t.cancelada && (t.tipo || 'despesa') === 'despesa'
+      && (t.container || 'casa') === c && !local[t.id];
+  }).sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0; });
+}
+
+function confirmarPrevisao(ym, t, valor) {
+  var tx = cloneObj(t);
+  delete tx.realizado_por; delete tx.cancelada; delete tx.migrada;
+  tx.valor = valor; tx.pago = true; tx.origem = 'jotter'; tx.realiza = t.id;
+  upsertLocal(ym, tx);
+  render();
+  toast('Confirmado');
+}
+
+function renderPrevisto(ym) {
+  var rows = previstoAqui(ym), list = $('prevList');
+  $('prevCard').hidden = !rows.length;
+  list.textContent = '';
+  if (!rows.length) return;
+  $('prevTitle').textContent = 'Previsto em ' + ondeAtual() + ' — ' + labelMes(ym);
+  var total = rows.reduce(function (a, t) { return a + (typeof t.valor === 'number' ? t.valor : (t.estimativa || 0)); }, 0);
+  $('prevTotal').textContent = rows.length + '× · ' + fmtBRL(Math.round(total * 100) / 100);
+  rows.forEach(function (t) {
+    var row = document.createElement('div'); row.className = 'tx';
+    var info = document.createElement('div'); info.className = 'info';
+    var d1 = document.createElement('div'); d1.className = 'desc';
+    d1.textContent = t.descricao;
+    var d2 = document.createElement('div'); d2.className = 'meta';
+    d2.textContent = fmtData(t.data) + ' · ' + weekdayLabel(t.data) + (t.vencimento && t.vencimento !== t.data
+      ? ' · vence ' + fmtData(t.vencimento) : '');
+    info.appendChild(d1); info.appendChild(d2);
+    var inp = document.createElement('input');
+    inp.type = 'text'; inp.inputMode = 'decimal'; inp.className = 'prev-valor';
+    inp.style.width = '6.5em'; inp.style.textAlign = 'right';
+    var est = typeof t.valor === 'number' ? t.valor : t.estimativa;
+    inp.value = typeof est === 'number' ? est.toFixed(2).replace('.', ',') : '';
+    inp.setAttribute('aria-label', 'Valor de ' + t.descricao);
+    var ok = document.createElement('button');
+    ok.className = 'rm'; ok.type = 'button'; ok.textContent = '✓';
+    ok.style.color = 'var(--green)';
+    ok.setAttribute('aria-label', 'Confirmar ' + t.descricao);
+    ok.addEventListener('click', function () {
+      var v = parseValor(inp.value);
+      if (!isFinite(v)) { toast('Valor inválido'); inp.focus(); return; }
+      confirmarPrevisao(ym, t, v);
+    });
+    row.appendChild(info); row.appendChild(inp); row.appendChild(ok);
+    list.appendChild(row);
+  });
+}
+
 function render() {
   var ym = currentMonth();
+  renderPrevisto(ym);
   var merged = mergedTxs(ym).sort(function (a, b) {
     return a.tx.data < b.tx.data ? -1 : a.tx.data > b.tx.data ? 1 : 0;
   });
@@ -1349,7 +1502,9 @@ function render() {
       ' · ' + rateioLabel(t.rateio) +
       ' · ' + (contasMap[t.conta] ? contasMap[t.conta].nome : t.conta) +
       ' · ' + formaLabel(t.forma) +
-      ' · pagou: ' + quemLabel(t.quem_pagou);
+      ' · pagou: ' + quemLabel(t.quem_pagou) +
+      (t.container && t.container !== 'casa' ? ' · 📍 ' + t.container : '') +
+      (t.local ? ' · @ ' + t.local : '');
 
     info.appendChild(d1);
     info.appendChild(d2);
@@ -1428,6 +1583,10 @@ var QUEM_OPTS = [
 var FORMA_SEG_LABELS = { credito: 'Crédito', debito: 'Débito', pix: 'Pix', dinheiro: 'Dinheiro' };
 
 $('fData').value = todayISO();
+$('fContainer').value = loadCustom(LS_ONDE, 'casa');
+$('fContainer').addEventListener('change', onContainerChange);
+buildContainers();
+buildLocais();
 buildOrcamentos();
 buildContaSelect();
 buildTagChips();
