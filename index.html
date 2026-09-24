@@ -246,6 +246,12 @@ select {
 .badge.mine  { background: var(--green);  color: #ffffff; }   /* ☁ registrado por este aparelho */
 .badge.cloud { background: var(--seg-bg); color: var(--text-muted); } /* ☁ registrado pelo outro */
 .empty { color: var(--text-muted); font-size: 14px; text-align: center; padding: 12px 0; }
+.secao { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+         margin: 16px 0 4px; font-size: 13px; font-weight: 600; color: var(--text-muted);
+         text-transform: uppercase; letter-spacing: .03em; }
+.secao:first-child { margin-top: 4px; }
+.secao button { background: none; border: 0; color: var(--accent); font: inherit; text-transform: none;
+                letter-spacing: 0; padding: 4px 0; cursor: pointer; }
 .err { color: var(--red); font-size: 14px; font-weight: 600; margin-top: 8px; display: none; }
 .footnote { font-size: 12px; color: var(--text-muted); text-align: center; }
 
@@ -504,7 +510,7 @@ select {
  * aparelho. Esta página é pública: nada da casa vem embutido. Antes do primeiro
  * sync, só o mínimo para a tela funcionar (sem contribuições nem rubricas).
  * ===================================================================== */
-var VERSAO = 'jotter · fatia 5c · 24/09/2026';
+var VERSAO = 'jotter · fatia 5c · 24/09/2026 · desfazer';
 var LS_CONFIG = 'f3budget.jotter.config';
 var CONFIG_MINIMA = {
   pessoas: { felipe: { nome: 'Felipe', contribuicao: 1 }, natalia: { nome: 'Natália', contribuicao: 1 } },
@@ -943,12 +949,13 @@ function sincronizar(silencioso) {
     var synced = getSynced(ym);
     loadMonth(ym).filter(function (t) { return !synced[t.id]; }).forEach(function (t) {
       chain = chain.then(function () {
-        var ev = NT.finalizeEvent({ kind: KIND, created_at: Math.floor(Date.now() / 1000),
+        var quando = Math.floor(Date.now() / 1000);
+        var ev = NT.finalizeEvent({ kind: KIND, created_at: quando,
           tags: [['d', dDe(t.id)], ['p', macPub()]],
           content: NT.nip44.v2.encrypt(JSON.stringify({ f3: 'tx', v: 3, tx: t }), conv) }, unhex(SK));
         return Promise.allSettled(pool.publish(RELAYS, ev).map(function (p) { return comPrazo(p, 8000); }))
           .then(function (res) {
-            if (res.some(function (r) { return r.status === 'fulfilled'; })) { synced[t.id] = true; saveSynced(ym, synced); enviados++; }
+            if (res.some(function (r) { return r.status === 'fulfilled'; })) { synced[t.id] = quando; saveSynced(ym, synced); enviados++; }
             else falhas++;
           });
       });
@@ -963,7 +970,11 @@ function sincronizar(silencioso) {
       try {
         var c = JSON.parse(NT.nip44.v2.decrypt(ev.content, conv));
         if (c.f3 === 'config') novaConfig = c;
-        else if (c.f3 === 'mes' && c.ym) { saveRemote(c.ym, { ledger: c.ledger || [], forecast: c.forecast || [], gerado_em: c.gerado_em }); meses++; }
+        else if (c.f3 === 'mes' && c.ym) {
+          saveRemote(c.ym, { ledger: c.ledger || [], forecast: c.forecast || [], gerado_em: c.gerado_em });
+          aplicarDescartados(c.ym, c.descartados || []);
+          meses++;
+        }
         else if (c.f3 === 'pareado') saveCustom(LS_PAREADO, { pessoa: c.pessoa, dispositivo: c.dispositivo });
       } catch (e) {}
     });
@@ -976,6 +987,36 @@ function sincronizar(silencioso) {
     toast((enviados ? enviados + ' enviado(s) · ' : '') + (falhas ? falhas + ' ficou(aram) para depois · ' : '') +
           (meses >= 0 ? 'Mac: ' + meses + ' mês(es)' : 'não baixei do Mac agora'));
   });
+}
+
+/* O Mac recusou (junk) ou desfez: apaga a cópia local — só se ELA foi enviada até o instante
+ * do evento descartado (`ate`). Confirmar de novo a mesma visita, depois, não some.
+ * `true` é o «enviado» de antes de 24/09/2026: conta como antigo. */
+function aplicarDescartados(ym, lista) {
+  if (!lista.length) return 0;
+  var synced = getSynced(ym), fora = {};
+  lista.forEach(function (d) { fora[d.id] = d.ate; });
+  var txs = loadMonth(ym), n = 0;
+  var ficam = txs.filter(function (t) {
+    var enviado = synced[t.id];
+    var sai = (t.id in fora) && enviado && (enviado === true || enviado <= fora[t.id]);
+    if (sai) { delete synced[t.id]; n++; }
+    return !sai;
+  });
+  if (n) { saveMonth(ym, ficam); saveSynced(ym, synced); }
+  return n;
+}
+
+/* ↶ desfazer: o que já saiu vai de novo, com o mesmo id, marcado `desfeito`. No Mac, o sync
+ * recusa sozinho se não estava no livro; se estava, o commit dele tira. */
+function desfazer(ym, t) {
+  if (!confirm('Desfazer «' + t.descricao + '»? O Mac fica sabendo no próximo sincronizar.')) return;
+  var t2 = cloneObj(t);
+  delete t2.registrado_por; delete t2.confirmado_em;
+  t2.desfeito = true;
+  upsertLocal(ym, t2);
+  render();
+  toast('Desfazer: sai no próximo sincronizar');
 }
 
 /* a configuração do Mac chegou: guarda e refaz o que depende dela */
@@ -1072,7 +1113,8 @@ function mergedTxs(ym) {
     var r = noLivro[t.id];
     var confirmado = r && JSON.stringify(Object.assign({}, r, { registrado_por: 0, confirmado_em: 0 })) ===
                           JSON.stringify(Object.assign({}, t, { registrado_por: 0, confirmado_em: 0 }));
-    if (r && (confirmado || synced[t.id] && r.confirmado_em)) return;   // o Mac já tem: fica o dele
+    // o Mac já tem: fica o dele — menos o pedido de desfazer, que aparece como tal até ele decidir
+    if (r && !t.desfeito && (confirmado || synced[t.id] && r.confirmado_em)) return;
     visto[t.id] = true;
     out.push({ tx: t, origem: 'local', pendente: !synced[t.id] });
   });
@@ -1406,7 +1448,7 @@ function renderPrevisto(ym) {
   $('prevCard').hidden = !rows.length;
   list.textContent = '';
   if (!rows.length) return;
-  $('prevTitle').textContent = 'Previsto em ' + ondeAtual() + ' — ' + labelMes(ym);
+  $('prevTitle').textContent = 'Previstos não confirmados — ' + ondeAtual() + ' · ' + labelMes(ym);
   var total = rows.reduce(function (a, t) { return a + (typeof t.valor === 'number' ? t.valor : (t.estimativa || 0)); }, 0);
   $('prevTotal').textContent = rows.length + '× · ' + fmtBRL(Math.round(total * 100) / 100);
   rows.forEach(function (t) {
@@ -1441,7 +1483,7 @@ function renderPrevisto(ym) {
 function render() {
   var ym = currentMonth();
   renderPrevisto(ym);
-  var merged = mergedTxs(ym).sort(function (a, b) {
+  var merged = mergedTxs(ym).filter(function (m) { return m.origem !== 'previsto'; }).sort(function (a, b) {
     return a.tx.data < b.tx.data ? -1 : a.tx.data > b.tx.data ? 1 : 0;
   });
 
@@ -1464,7 +1506,7 @@ function render() {
 
   var ident = getIdent() || {};
   var contasMap = allContas();
-  merged.forEach(function (m) {
+  function linha(m) {
     var t = m.tx;
     var row = document.createElement('div');
     row.className = 'tx';
@@ -1480,6 +1522,9 @@ function render() {
       var mine = ident.dispositivo && t.registrado_por.dispositivo === ident.dispositivo;
       d1.appendChild(document.createTextNode(' '));
       d1.appendChild(mkBadge(mine ? '☁ você' : '☁ ' + nomePessoa(t.registrado_por.pessoa), mine ? 'mine' : 'cloud'));
+    } else if (m.origem === 'local' && t.desfeito) {
+      d1.appendChild(document.createTextNode(' '));
+      d1.appendChild(mkBadge(m.pendente ? '↶ desfazer: a enviar' : '↶ desfazer: no Mac', m.pendente ? 'up' : 'cloud'));
     } else if (m.origem === 'local' && m.pendente) {
       d1.appendChild(document.createTextNode(' '));
       d1.appendChild(mkBadge('⬆ enviar', 'up'));
@@ -1530,7 +1575,7 @@ function render() {
 
     // remover só o que ainda é rascunho local (não enviado). O que já está no
     // servidor não se apaga do aparelho (deleção server-side fica p/ depois).
-    if (m.origem === 'local' && m.pendente) {
+    if (m.origem === 'local' && m.pendente && !t.desfeito) {
       var rm = document.createElement('button');
       rm.className = 'rm';
       rm.type = 'button';
@@ -1542,10 +1587,75 @@ function render() {
       row.appendChild(rm);
     }
 
-    list.appendChild(row);
+    // ↶ desfazer: o que este aparelho já enviou (no Mac, ou já no livro)
+    var meu = m.origem === 'remoto' && t.registrado_por && ident.dispositivo &&
+              t.registrado_por.dispositivo === ident.dispositivo;
+    if (((m.origem === 'local' && !m.pendente) || meu) && !t.desfeito) {
+      var un = document.createElement('button');
+      un.className = 'rm'; un.type = 'button'; un.textContent = '↶';
+      un.setAttribute('aria-label', 'Desfazer ' + t.descricao);
+      un.addEventListener('click', function () { desfazer(ym, t); });
+      row.appendChild(un);
+    }
+    return row;
+  }
+
+  // as seções: o que falta enviar, o que o Mac ainda não confirmou, e o que já está no livro
+  var limpos = loadCustom(LS_LIMPOS + ym, []);
+  var secoes = [
+    { nome: 'A enviar', itens: merged.filter(function (m) { return m.origem === 'local' && m.pendente; }) },
+    { nome: 'No Mac, aguardando', itens: merged.filter(function (m) { return m.origem === 'local' && !m.pendente; }) },
+    { nome: 'Confirmados', confirmados: true,
+      itens: merged.filter(function (m) { return m.origem === 'remoto' && limpos.indexOf(m.tx.id) < 0; }) }
+  ];
+  var aberto = loadCustom(LS_CONF_ABERTO, false);
+  secoes.forEach(function (sec) {
+    if (!sec.itens.length && !(sec.confirmados && limpos.length)) return;
+    var h = document.createElement('div'); h.className = 'secao';
+    var titulo = document.createElement('span');
+    titulo.textContent = sec.nome + ' · ' + sec.itens.length;
+    h.appendChild(titulo);
+    if (sec.confirmados) {
+      var acoes = document.createElement('span');
+      var abre = document.createElement('button'); abre.type = 'button';
+      abre.textContent = aberto ? 'fechar' : 'mostrar';
+      abre.addEventListener('click', function () { saveCustom(LS_CONF_ABERTO, !aberto); render(); });
+      acoes.appendChild(abre);
+      if (sec.itens.length) {
+        var limpa = document.createElement('button'); limpa.type = 'button'; limpa.textContent = ' · limpar';
+        limpa.addEventListener('click', function () { limparConfirmados(ym, sec.itens); });
+        acoes.appendChild(limpa);
+      }
+      if (limpos.length) {
+        var volta = document.createElement('button'); volta.type = 'button';
+        volta.textContent = ' · ' + limpos.length + ' limpos: trazer';
+        volta.addEventListener('click', function () { saveCustom(LS_LIMPOS + ym, []); render(); });
+        acoes.appendChild(volta);
+      }
+      h.appendChild(acoes);
+    }
+    list.appendChild(h);
+    if (sec.confirmados && !aberto) return;
+    sec.itens.forEach(function (m) { list.appendChild(linha(m)); });
   });
 
   updateSyncBtn();
+}
+
+/* limpar: some da tela o que o Mac já confirmou (fica no Mac; «trazer» mostra de novo) e
+ * apaga daqui as cópias locais que ele já tem */
+var LS_LIMPOS = 'f3budget.jotter.limpos.', LS_CONF_ABERTO = 'f3budget.jotter.confirmados.aberto';
+function limparConfirmados(ym, itens) {
+  var ids = loadCustom(LS_LIMPOS + ym, []);
+  itens.forEach(function (m) { if (ids.indexOf(m.tx.id) < 0) ids.push(m.tx.id); });
+  saveCustom(LS_LIMPOS + ym, ids);
+  var remoto = {};
+  ((getRemote(ym) || {}).ledger || []).forEach(function (t) { if (t.confirmado_em) remoto[t.id] = true; });
+  var synced = getSynced(ym);
+  // o pedido de desfazer fica: ele é o que está esperando o Mac
+  saveMonth(ym, loadMonth(ym).filter(function (t) { return t.desfeito || !(remoto[t.id] && synced[t.id]); }));
+  render();
+  toast('Limpo');
 }
 
 /* Copiar/Baixar JSON saíram (23/09/2026): o jotter só anota e envia; qualquer
