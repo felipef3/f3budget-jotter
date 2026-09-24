@@ -11,15 +11,16 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icone-180.png">
 <!--
-  f3budget-jotter (fatia 4, 23/09/2026): o jotter de f3budget-app@3dd8245, com as
-  telas e os apps (Gasto, Água, Diarista) como eram, e quatro trocas:
-    1. a sincronização: do servidor HTTP do Mac para eventos Nostr cifrados (NIP-44)
-       para a chave do Mac — o Mac busca quando quiser e confirma (contrato v3);
-    2. a configuração (pessoas, contas, rubricas, tags, membros) não vem mais
-       embutida: esta página é PÚBLICA. O Mac a publica cifrada para cada aparelho;
-    3. o ⚙ mostra o pareamento, que é feito lendo o QR do `device pair`;
-    4. «para quem» (membros, «Todos» por padrão) e a nota com «para o Claude».
-  Abre sem rede pelo service worker (sw.js).
+  f3budget-jotter, o mensageiro (fatia 5d, 24/09/2026). Decisão dele: «o nosso jotter
+  está ficando muito complicado para simplesmente uma página web offline».
+  Agora ele só ANOTA e ENVIA, como um app simples de mensagem:
+    - o que se lança fica numa lista, com ✓ quando saiu;
+    - Enviar manda pelo Nostr (cifrado, só o Mac lê) o que falta;
+    - Limpar apaga tudo do aparelho; Exportar JSON é a saída quando o Nostr falha;
+    - o formulário não tem listas: a rubrica, a conta e o local são texto livre;
+    - as mini apps (Água, Diarista) só lançam.
+  Nada volta do Mac além do «pareado». Toda a lógica mora no Mac (TAREFA.md, «o jotter
+  vira mensageiro»). Abre sem rede pelo service worker (sw.js).
 -->
 <script>
 /* Tema antes do paint (evita flash) — igual ao f3jobs: classe no <html>,
@@ -113,7 +114,7 @@ main { max-width: 560px; margin: 0 auto; padding: 16px; display: flex; flex-dire
 /* ==== Formulário ==== */
 .field { margin-bottom: 16px; }
 .field label { display: block; font-size: 14px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
-input[type="text"], input[type="date"], select, textarea {
+input[type="text"], input[type="date"] {
   width: 100%;
   font: inherit;
   font-size: 16px;
@@ -126,17 +127,11 @@ input[type="text"], input[type="date"], select, textarea {
   appearance: none;
   -webkit-appearance: none;
 }
-input:focus, select:focus, textarea:focus, .seg button:focus-visible, .btn:focus-visible {
+input:focus, .seg button:focus-visible, .btn:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
 input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
-select {
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%2364748b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 36px;
-}
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 /* ==== Segmented control (pílula) ==== */
@@ -158,32 +153,6 @@ select {
 .seg button.on { background: var(--accent); color: #ffffff; }
 .hint { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 18px; }
 
-/* ==== Chips (tags, multi-seleção) ==== */
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-  border: 1px solid var(--border);
-  background: var(--input-bg);
-  color: var(--seg-text);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  border-radius: 999px;
-  padding: 10px 14px;
-  min-height: 42px;
-  cursor: pointer;
-}
-.chip.on { background: var(--accent); border-color: var(--accent); color: #ffffff; }
-.chip.add { color: var(--accent); background: transparent; border-style: dashed; }
-.minichips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
-.minichip {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--seg-bg);
-  color: var(--seg-text);
-}
-
 /* ==== Botões ==== */
 .btn {
   display: block;
@@ -199,6 +168,7 @@ select {
 }
 .btn-primary { background: var(--accent); color: #ffffff; }
 .btn-primary:active, .btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: .6; }
 .btn-secondary {
   background: transparent;
   color: var(--accent);
@@ -207,9 +177,10 @@ select {
   min-height: 48px;
   padding: 12px;
 }
+.btn-danger { color: var(--red); }
 .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 
-/* ==== Lista do mês ==== */
+/* ==== Listas ==== */
 .month-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .month-head h2 { margin-bottom: 0; }
 .month-total { font-size: 14px; font-weight: 700; }
@@ -220,7 +191,9 @@ select {
 .tx .meta { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tx .val { font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tx .val.neg { color: var(--red); }
-.tx .val.pend { color: var(--text-muted); font-weight: 600; }
+.tx .marca { width: 28px; text-align: center; font-weight: 700; flex-shrink: 0; }
+.tx .marca.ok { color: var(--green); }
+.tx .marca.fila { color: var(--text-muted); }
 .tx .rm {
   background: transparent;
   border: none;
@@ -232,26 +205,7 @@ select {
   cursor: pointer;
   flex-shrink: 0;
 }
-.badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--seg-bg);
-  color: var(--seg-text);
-  vertical-align: 1px;
-}
-.badge.up    { background: var(--accent); color: #ffffff; }   /* ⬆ a enviar (rascunho local) */
-.badge.mine  { background: var(--green);  color: #ffffff; }   /* ☁ registrado por este aparelho */
-.badge.cloud { background: var(--seg-bg); color: var(--text-muted); } /* ☁ registrado pelo outro */
 .empty { color: var(--text-muted); font-size: 14px; text-align: center; padding: 12px 0; }
-.secao { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-         margin: 16px 0 4px; font-size: 13px; font-weight: 600; color: var(--text-muted);
-         text-transform: uppercase; letter-spacing: .03em; }
-.secao:first-child { margin-top: 4px; }
-.secao button { background: none; border: 0; color: var(--accent); font: inherit; text-transform: none;
-                letter-spacing: 0; padding: 4px 0; cursor: pointer; }
 .err { color: var(--red); font-size: 14px; font-weight: 600; margin-top: 8px; display: none; }
 .footnote { font-size: 12px; color: var(--text-muted); text-align: center; }
 
@@ -297,7 +251,7 @@ select {
     <div class="brand">f3budget <small>jotter</small></div>
   </div>
   <div class="topbar-actions">
-    <button class="theme-btn" id="cfgBtn" type="button" aria-label="Conexão com o Mac">⚙</button>
+    <button class="theme-btn" id="cfgBtn" type="button" aria-label="Pareamento com o Mac">⚙</button>
     <button class="theme-btn" id="themeBtn" type="button" aria-label="Alternar tema">🌙</button>
   </div>
 </header>
@@ -325,22 +279,13 @@ select {
         <button class="appicon" type="button" data-app="diarista"><span class="glyph g-diarista">🧹</span><span class="label">Diarista</span></button>
       </div>
     </section>
-    <p class="footnote">Cada ícone é um jeito de anotar. Novos apps entram aqui conforme a rotina da casa pedir.</p>
   </div>
 
-  <!-- ===== APP: GASTO (lançamento genérico) ===== -->
+  <!-- ===== APP: GASTO ===== -->
   <div class="screen" id="screen-gasto" hidden>
-  <!-- ===== Novo lançamento ===== -->
   <section class="card">
-    <h2>Novo lançamento</h2>
+    <h2>Novo gasto</h2>
     <form id="txForm" autocomplete="off">
-      <div class="field">
-        <label for="fContainer">Onde estou (container)</label>
-        <input type="text" id="fContainer" list="dlContainers" placeholder="casa" autocapitalize="none" spellcheck="false" enterkeyhint="next">
-        <datalist id="dlContainers"></datalist>
-        <div class="hint" id="containerHint"></div>
-      </div>
-
       <div class="field">
         <label for="fDescricao">Item / descrição</label>
         <input type="text" id="fDescricao" placeholder="ex.: Feira, Farmácia, Almoço…" enterkeyhint="next">
@@ -358,14 +303,19 @@ select {
       </div>
 
       <div class="field">
-        <label for="fLocal">Local (opcional)</label>
-        <input type="text" id="fLocal" list="dlLocais" placeholder="ex.: Armazém Guimarães" enterkeyhint="next">
-        <datalist id="dlLocais"></datalist>
+        <label for="fRubrica">Rubrica (opcional)</label>
+        <input type="text" id="fRubrica" placeholder="ex.: feira, farmácia, escola do Fael" enterkeyhint="next">
       </div>
 
-      <div class="field">
-        <label for="fConta">Conta</label>
-        <select id="fConta"></select>
+      <div class="row2">
+        <div class="field">
+          <label for="fConta">Conta (opcional)</label>
+          <input type="text" id="fConta" placeholder="ex.: C6, Nubank" autocapitalize="none" enterkeyhint="next">
+        </div>
+        <div class="field">
+          <label for="fLocal">Local (opcional)</label>
+          <input type="text" id="fLocal" placeholder="ex.: Armazém Guimarães" enterkeyhint="next">
+        </div>
       </div>
 
       <div class="field">
@@ -386,22 +336,6 @@ select {
       <div class="field">
         <label>Rateio</label>
         <div class="seg" id="segRateio" role="radiogroup" aria-label="Rateio"></div>
-        <div class="hint" id="rateioHint"></div>
-      </div>
-
-      <div class="field">
-        <label>Tags (o que é — pode marcar várias)</label>
-        <div class="chips" id="chipsTags"></div>
-      </div>
-
-      <div class="field">
-        <label for="fOrcamento">Orçamento (linha do plano)</label>
-        <select id="fOrcamento"></select>
-      </div>
-
-      <div class="field">
-        <label>Para quem</label>
-        <div class="chips" id="chipsPara"></div>
       </div>
 
       <div class="field">
@@ -416,36 +350,14 @@ select {
       <div class="err" id="formErr"></div>
     </form>
   </section>
+  </div>
 
-  <!-- ===== O previsto do container onde estou (5c): confirmar com um toque ===== -->
-  <section class="card" id="prevCard" hidden>
-    <div class="month-head">
-      <h2 id="prevTitle">Previsto aqui</h2>
-      <div class="month-total" id="prevTotal"></div>
-    </div>
-    <p class="hint">O que o Mac previu para este container no mês. Aconteceu? Corrija o valor, se mudou, e toque ✓.</p>
-    <div id="prevList"></div>
-  </section>
-
-  <!-- ===== Lançamentos do mês ===== -->
-  <section class="card">
-    <div class="month-head">
-      <h2 id="monthTitle">Lançamentos</h2>
-      <div class="month-total" id="monthTotal"></div>
-    </div>
-    <div id="txList"></div>
-    <button class="btn btn-primary" id="btnSync" type="button" style="margin-top:14px;">Sincronizar</button>
-  </section>
-
-  <p class="footnote">Anota offline no aparelho; <strong>Sincronizar</strong> envia pelo Nostr (cifrado, só o Mac lê) e baixa o que o Mac já confirmou — o que você mandou fica «no Mac» até ele confirmar.</p>
-  </div><!-- /screen-gasto -->
-
-  <!-- ===== APP: ÁGUA (tally de galões → conta do mês) ===== -->
+  <!-- ===== APP: ÁGUA (os galões do mês → uma conta) ===== -->
   <div class="screen" id="screen-agua" hidden>
     <section class="card">
       <h2>Água mineral</h2>
-      <p class="hint">Registre os galões pedidos. Vira a conta que vence <strong>dia 10 do mês seguinte</strong>
-      (a despesa é do mês de consumo).</p>
+      <p class="hint">Registre os galões pedidos. Vira a conta do mês, que vence <strong>dia 10 do mês
+      seguinte</strong>; a cada pedido, a conta vai de novo, somada.</p>
       <div class="row2">
         <div class="field"><label for="agData">Data do pedido</label><input type="date" id="agData"></div>
         <div class="field"><label>Tamanho</label><div class="seg" id="segAgTam" role="radiogroup" aria-label="Tamanho"></div></div>
@@ -475,8 +387,8 @@ select {
   <div class="screen" id="screen-diarista" hidden>
     <section class="card">
       <h2>Diarista</h2>
-      <p class="hint">Padrão: <strong>R$ 150</strong> por visita · rateio meio · conta conjunta. Vem terça e
-      sexta (as visitas vêm previstas do Mac). Registre aqui quando ela vier — confirma o dia.</p>
+      <p class="hint">Padrão: <strong>R$ 150</strong> por visita · rateio meio · conta conjunta.
+      Registre quando ela vier.</p>
       <div class="row2">
         <div class="field"><label for="diaData">Data</label><input type="date" id="diaData"></div>
         <div class="field"><label for="diaValor">Valor (R$)</label><input type="text" id="diaValor" inputmode="decimal" value="150,00"></div>
@@ -488,14 +400,24 @@ select {
       <button class="btn btn-primary" id="btnDiaAdd" type="button">Registrar visita</button>
       <div class="err" id="diaErr"></div>
     </section>
-    <section class="card">
-      <div class="month-head">
-        <h2 id="diaMonthTitle">Visitas do mês</h2>
-        <div class="month-total" id="diaTotal"></div>
-      </div>
-      <div id="diaList"></div>
-    </section>
   </div>
+
+  <!-- ===== As mensagens: o que foi lançado neste aparelho ===== -->
+  <section class="card">
+    <div class="month-head">
+      <h2>Neste aparelho</h2>
+      <div class="month-total" id="msgTotal"></div>
+    </div>
+    <div id="msgList"></div>
+    <button class="btn btn-primary" id="btnEnviar" type="button" style="margin-top:14px;">Enviar</button>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btnExportar" type="button">Exportar JSON</button>
+      <button class="btn btn-secondary btn-danger" id="btnLimpar" type="button">Limpar</button>
+    </div>
+  </section>
+
+  <p class="footnote">Anota sem rede; <strong>Enviar</strong> manda pelo Nostr (cifrado, só o Mac lê). ✓ é o que já
+    saiu. O resto — classificar, confirmar, corrigir — é no Mac.</p>
 </main>
 
 <div id="toast">Adicionado</div>
@@ -505,44 +427,7 @@ select {
 <script>
 'use strict';
 
-/* =====================================================================
- * CONFIG — vem do MAC, cifrada (evento `config` do `sync`), e fica guardada no
- * aparelho. Esta página é pública: nada da casa vem embutido. Antes do primeiro
- * sync, só o mínimo para a tela funcionar (sem contribuições nem rubricas).
- * ===================================================================== */
-var VERSAO = 'jotter · fatia 5c · 24/09/2026 · desfazer';
-var LS_CONFIG = 'f3budget.jotter.config';
-var CONFIG_MINIMA = {
-  pessoas: { felipe: { nome: 'Felipe', contribuicao: 1 }, natalia: { nome: 'Natália', contribuicao: 1 } },
-  contas: { c6: { nome: 'C6', titular: 'conjunta' } },
-  formas: ['credito', 'debito', 'pix', 'dinheiro'],
-  tags: [], orcamentos: {},
-  membros: { todos: { nome: 'Todos', apelidos: [] } },
-  metaDescricao: 'Livro-caixa de um mês (um arquivo por mês).'
-};
-var CONFIG = (function () {
-  try { var c = JSON.parse(localStorage.getItem(LS_CONFIG)); if (c && c.pessoas) return c; } catch (e) {}
-  return CONFIG_MINIMA;
-})();
-if (!CONFIG.metaDescricao) CONFIG.metaDescricao = CONFIG_MINIMA.metaDescricao;
-if (!CONFIG.membros) CONFIG.membros = CONFIG_MINIMA.membros;
-var CONFIG_DO_MAC = CONFIG !== CONFIG_MINIMA;
-
-var SOMA_CONTRIB, PCT_FELIPE, PCT_NATALIA;
-function calcPct() {
-  SOMA_CONTRIB = CONFIG.pessoas.felipe.contribuicao + CONFIG.pessoas.natalia.contribuicao;
-  PCT_FELIPE  = CONFIG.pessoas.felipe.contribuicao  / SOMA_CONTRIB;
-  PCT_NATALIA = CONFIG.pessoas.natalia.contribuicao / SOMA_CONTRIB;
-}
-calcPct();
-
-var LS_PREFIX = 'f3budget.jotter.v2.'; // + AAAA-MM (v2 = contrato com forma/tags/orcamento)
-var LS_CUSTOM_CONTAS = 'f3budget.jotter.custom.contas'; // {id:{nome,titular}} criadas no aparelho
-var LS_CUSTOM_TAGS   = 'f3budget.jotter.custom.tags';   // [string] criadas no aparelho
-/* ---- sync (passo 2) ---- */
-var LS_IDENT  = 'f3budget.jotter.identidade';  // {servidor, token, pessoa?, dispositivo?}
-var LS_REMOTE = 'f3budget.jotter.remote.';     // + AAAA-MM → {meta, transacoes} baixado do Mac
-var LS_SYNCED = 'f3budget.jotter.synced.';     // + AAAA-MM → {id:true} já confirmados no servidor
+var VERSAO = 'jotter · fatia 5d · 24/09/2026 · mensageiro';
 
 /* ============================ helpers ============================ */
 
@@ -555,7 +440,7 @@ function todayISO() {
 
 /* slug: minúsculo, sem acento, hífens */
 function slugify(s) {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'lancamento';
@@ -574,7 +459,7 @@ function parseValor(s) {
 
 var brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 function fmtBRL(n) { return brl.format(n); }
-function fmtPct(p) { return (p * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'; }
+function fmtData(iso) { return iso.slice(8) + '/' + iso.slice(5, 7); }
 
 var MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
              'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -583,31 +468,52 @@ function labelMes(ym) { // "2026-03" → "março de 2026"
   return MESES[Number(p[1]) - 1] + ' de ' + p[0];
 }
 
-/* ======================= storage por mês ======================= */
-
-function loadMonth(ym) {
+function loadCustom(key, fallback) {
   try {
-    var raw = localStorage.getItem(LS_PREFIX + ym);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) { return []; }
+    var raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) { return fallback; }
 }
-function saveMonth(ym, txs) {
-  try { localStorage.setItem(LS_PREFIX + ym, JSON.stringify(txs)); } catch (e) {}
+function saveCustom(key, v) {
+  try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
+}
+function cloneObj(o) { var r = {}; for (var k in o) r[k] = o[k]; return r; }
+
+function hex(b) { return Array.from(b, function (x) { return x.toString(16).padStart(2, '0'); }).join(''); }
+function unhex(h) { return Uint8Array.from(h.match(/../g).map(function (x) { return parseInt(x, 16); })); }
+function aleatorio(n) { return hex(crypto.getRandomValues(new Uint8Array(n))); }
+
+/* =================== as mensagens (a caixa de saída) ===================
+ * Uma lista só: [{tx, enviado}], `enviado` é o instante (segundos) em que saiu, ou null.
+ * Limpar apaga a lista; nada aqui depende do que o Mac fez depois. */
+var LS_MSGS = 'f3budget.jotter.mensagens';
+var LS_D = 'f3budget.jotter.d';   // {id do lançamento: d do evento} — fica depois de Limpar
+
+function loadMsgs() { return loadCustom(LS_MSGS, []); }
+function saveMsgs(ms) { saveCustom(LS_MSGS, ms); }
+function aEnviar() { return loadMsgs().filter(function (m) { return !m.enviado; }); }
+
+/* mesmo id → a mensagem é substituída e sai de novo (o Mac vê como edição, pelo mesmo `d`) */
+function guardar(tx) {
+  var ms = loadMsgs(), achou = false;
+  for (var i = 0; i < ms.length; i++) if (ms[i].tx.id === tx.id) { ms[i] = { tx: tx, enviado: null }; achou = true; }
+  if (!achou) ms.push({ tx: tx, enviado: null });
+  saveMsgs(ms);
+  render();
+  enviar(true);
+}
+function tirar(id) {
+  saveMsgs(loadMsgs().filter(function (m) { return m.tx.id !== id; }));
+  render();
 }
 
-/* id: AAAA-MM-DD-<slug>; se colidir no mês, sufixa -2, -3… */
-function genId(data, descricao, txs) {
-  var base = data + '-' + slugify(descricao);
-  var id = base, n = 2;
-  var ids = {};
-  txs.forEach(function (t) { ids[t.id] = true; });
-  while (ids[id]) { id = base + '-' + n; n++; }
-  return id;
-}
+/* id: AAAA-MM-DD-<slug>-<4 hex> — o sufixo aleatório porque, depois de Limpar, o aparelho não
+ * sabe mais o que já mandou: a feira de amanhã não pode virar «edição» da de hoje. */
+function novoId(data, descricao) { return data + '-' + slugify(descricao) + '-' + aleatorio(2); }
 
 /* ==================== estado dos segmented ==================== */
 
-var state = { conta: 'c6', forma: 'credito', quem_pagou: 'conjunta', pago: true, rateio: 'casal', tags: [], para_quem: 'todos' };
+var state = { forma: 'credito', quem: 'eu', pago: true, rateio: 'casal' };
 
 function buildSeg(el, opts, get, set) {
   opts.forEach(function (o) {
@@ -629,202 +535,7 @@ function syncSeg(el, opts, get) {
   });
 }
 
-/* ======================= dica de rateio ======================= */
-
-function updateRateioHint() {
-  var el = $('rateioHint');
-  var v = parseValor($('fValor').value);
-  var abs = isFinite(v) ? Math.abs(v) : NaN;
-  var f, n;
-  switch (state.rateio) {
-    case 'casal':
-      if (!CONFIG_DO_MAC) { el.textContent = 'Pelo % de contribuição (chega do Mac no primeiro sincronizar).'; break; }
-      if (isFinite(abs) && abs > 0) {
-        f = Math.round(abs * PCT_FELIPE * 100) / 100;
-        n = Math.round((abs - f) * 100) / 100;
-        el.textContent = 'Casal ' + fmtPct(PCT_FELIPE) + ' / ' + fmtPct(PCT_NATALIA) +
-          ' → Felipe ' + fmtBRL(f) + ' · Natália ' + fmtBRL(n);
-      } else {
-        el.textContent = 'Pelo % de contribuição: Felipe ' + fmtPct(PCT_FELIPE) + ' · Natália ' + fmtPct(PCT_NATALIA);
-      }
-      break;
-    case 'meio':
-      if (isFinite(abs) && abs > 0) {
-        f = Math.round(abs / 2 * 100) / 100;
-        el.textContent = '50/50 → Felipe ' + fmtBRL(f) + ' · Natália ' + fmtBRL(Math.round((abs - f) * 100) / 100);
-      } else {
-        el.textContent = 'Divide meio a meio (50/50).';
-      }
-      break;
-    case 'felipe':  el.textContent = '100% Felipe (gasto pessoal).'; break;
-    case 'natalia': el.textContent = '100% Natália (gasto pessoal).'; break;
-  }
-}
-
-/* ============ contas (select + "nova"), tags, orçamento ============ */
-
-function loadCustom(key, fallback) {
-  try {
-    var raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch (e) { return fallback; }
-}
-function saveCustom(key, v) {
-  try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {}
-}
-
-/* CONFIG.contas + contas criadas no aparelho (localStorage) */
-function allContas() {
-  var out = {};
-  Object.keys(CONFIG.contas).forEach(function (k) { out[k] = CONFIG.contas[k]; });
-  var extra = loadCustom(LS_CUSTOM_CONTAS, {});
-  Object.keys(extra).forEach(function (k) { if (!out[k]) out[k] = extra[k]; });
-  return out;
-}
-
-function buildContaSelect() {
-  var sel = $('fConta');
-  sel.textContent = '';
-  var contas = allContas();
-  Object.keys(contas).forEach(function (id) {
-    var o = document.createElement('option');
-    o.value = id;
-    o.textContent = contas[id].nome;
-    sel.appendChild(o);
-  });
-  var nova = document.createElement('option');
-  nova.value = '__nova__';
-  nova.textContent = '+ nova conta…';
-  sel.appendChild(nova);
-  sel.value = state.conta;
-}
-
-/* REGRA DE DEFAULT do quem_pagou (contrato §4): conta conjunta → 'conjunta';
-   conta com titular pessoa → essa pessoa; titular desconhecido (conta criada
-   no aparelho) → mantém a escolha atual. O usuário pode sobrepor no segmented. */
-function applyQuemDefault() {
-  var c = allContas()[state.conta];
-  var t = c && c.titular;
-  if (t === 'conjunta' || (t && CONFIG.pessoas[t])) {
-    state.quem_pagou = t;
-    syncSeg($('segQuem'), QUEM_OPTS, function () { return state.quem_pagou; });
-  }
-}
-
-function onContaChange() {
-  var sel = $('fConta');
-  var v = sel.value;
-  if (v === '__nova__') {
-    var nome = prompt('Nome da nova conta:');
-    nome = nome ? nome.trim() : '';
-    if (!nome) { sel.value = state.conta; return; }
-    var id = slugify(nome);
-    if (!allContas()[id]) {
-      var extra = loadCustom(LS_CUSTOM_CONTAS, {});
-      extra[id] = { nome: nome, titular: null };
-      saveCustom(LS_CUSTOM_CONTAS, extra);
-    }
-    state.conta = id;
-    buildContaSelect();
-    render(); // conta nova pode renomear linhas da lista
-    return;   // titular desconhecido → não mexe no quem_pagou
-  }
-  state.conta = v;
-  applyQuemDefault();
-}
-
-/* CONFIG.tags + tags criadas no aparelho */
-function allTags() {
-  var seen = {}, out = [];
-  CONFIG.tags.concat(loadCustom(LS_CUSTOM_TAGS, [])).forEach(function (t) {
-    if (!seen[t]) { seen[t] = true; out.push(t); }
-  });
-  return out;
-}
-
-function buildTagChips() {
-  var box = $('chipsTags');
-  box.textContent = '';
-  allTags().forEach(function (tag) {
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'chip';
-    b.textContent = tag;
-    var on = state.tags.indexOf(tag) >= 0;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.addEventListener('click', function () {
-      var i = state.tags.indexOf(tag);
-      if (i >= 0) state.tags.splice(i, 1); else state.tags.push(tag);
-      var now = state.tags.indexOf(tag) >= 0;
-      b.classList.toggle('on', now);
-      b.setAttribute('aria-pressed', now ? 'true' : 'false');
-    });
-    box.appendChild(b);
-  });
-  var add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'chip add';
-  add.textContent = '+ nova tag';
-  add.addEventListener('click', function () {
-    var nome = prompt('Nome da nova tag:');
-    nome = nome ? nome.trim() : '';
-    if (!nome) return;
-    var tag = slugify(nome);
-    if (allTags().indexOf(tag) < 0) {
-      var extra = loadCustom(LS_CUSTOM_TAGS, []);
-      extra.push(tag);
-      saveCustom(LS_CUSTOM_TAGS, extra);
-    }
-    if (state.tags.indexOf(tag) < 0) state.tags.push(tag); // nova tag já entra marcada
-    buildTagChips();
-  });
-  box.appendChild(add);
-}
-
-function buildOrcamentos() {
-  var sel = $('fOrcamento');
-  var atual = sel.value;
-  sel.textContent = '';
-  var opt = document.createElement('option');
-  opt.value = '';
-  opt.textContent = '(a classificar)';
-  sel.appendChild(opt);
-  Object.keys(CONFIG.orcamentos).forEach(function (grupo) {
-    var g = CONFIG.orcamentos[grupo];
-    Object.keys(g.itens).forEach(function (item) {
-      var o = document.createElement('option');
-      o.value = grupo + '.' + item;
-      o.textContent = g.descricao + ' › ' + g.itens[item];
-      sel.appendChild(o);
-    });
-  });
-  sel.value = atual || '';
-}
-
-/* ---- para quem (membros da casa, do Mac); «todos» é o padrão ---- */
-function buildParaQuem() {
-  var box = $('chipsPara');
-  box.textContent = '';
-  var ms = CONFIG.membros || CONFIG_MINIMA.membros;
-  if (!ms[state.para_quem]) state.para_quem = 'todos';
-  Object.keys(ms).forEach(function (k) {
-    var b = document.createElement('button');
-    b.type = 'button'; b.className = 'chip'; b.textContent = ms[k].nome || k;
-    var on = state.para_quem === k;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.addEventListener('click', function () { state.para_quem = k; buildParaQuem(); });
-    box.appendChild(b);
-  });
-}
-
-/* ===================== adicionar / remover ===================== */
-
-function currentMonth() {
-  var d = $('fData').value || todayISO();
-  return d.slice(0, 7);
-}
+/* ===================== o gasto ===================== */
 
 function showErr(msg) {
   var e = $('formErr');
@@ -832,85 +543,164 @@ function showErr(msg) {
   e.style.display = msg ? 'block' : 'none';
 }
 
+function eu() { return (getIdent() || {}).pessoa || 'conjunta'; }
+
 function addTx(ev) {
   ev.preventDefault();
   showErr('');
-
   var descricao = $('fDescricao').value.trim();
   var data = $('fData').value;
   var valor = parseValor($('fValor').value);
-
   if (!descricao) { showErr('Falta a descrição (o item).'); $('fDescricao').focus(); return; }
   if (!data) { showErr('Falta a data.'); return; }
   if (!isFinite(valor)) { showErr('Valor inválido — use 12,50 ou 12.50 (negativo = reembolso).'); $('fValor').focus(); return; }
 
-  var ym = data.slice(0, 7);
-  var txs = loadMonth(ym);
-
-  /* objeto transação — CONTRATO v2 (nomes E ordem dos campos importam;
-     é o que intel/ e o agente consomem) */
-  var tx = {
-    id: genId(data, descricao, txs),
-    data: data,
-    descricao: descricao,
-    valor: valor,
-    conta: state.conta,
-    forma: state.forma,
-    pago: state.pago,
-    quem_pagou: state.quem_pagou,
-    tags: state.tags.slice(),
-    orcamento: $('fOrcamento').value || null,
-    rateio: state.rateio,
-    para_quem: state.para_quem,
-    origem: 'jotter'
-  };
-  var onde = ondeAtual(), local = $('fLocal').value.trim();
-  if (onde !== 'casa') tx.container = onde;       // sem o campo, é casa (contrato v3)
-  if (local) { tx.local = local; lembrarLocal(local); }
+  var tx = { id: novoId(data, descricao), data: data, descricao: descricao, valor: valor };
+  var conta = $('fConta').value.trim(), rubrica = $('fRubrica').value.trim(), local = $('fLocal').value.trim();
+  if (conta) tx.conta = slugify(conta);
+  tx.forma = state.forma;
+  tx.pago = state.pago;
+  tx.quem_pagou = state.quem === 'eu' ? eu() : 'conjunta';
+  if (rubrica) tx.rubrica = rubrica;          // texto livre: o Mac dá o `orcamento`
+  tx.rateio = state.rateio === 'meu' ? eu() : 'casal';
+  tx.origem = 'jotter';
+  if (local) tx.local = local;
   var nota = $('fObs').value.trim();
   if (nota) tx.notas = [{ texto: nota, autor: (getIdent() || {}).pessoa || 'jotter',
                           em: new Date().toISOString(), claude: $('fClaude').checked }];
 
-  txs.push(tx);
-  saveMonth(ym, txs);
-
-  /* limpa só o que muda a cada item; conta/forma/quem/pago/rateio/tags/
-     orçamento ficam (no mercado se lança vários itens com o mesmo contexto) */
+  /* limpa só o que muda a cada item; o resto fica (no mercado se lança vários com o mesmo contexto) */
   $('fDescricao').value = '';
   $('fValor').value = '';
   $('fObs').value = '';
   $('fClaude').checked = false;
-  updateRateioHint();
-  buildContainers();
-  render();
+  guardar(tx);
   toast('Adicionado');
   $('fDescricao').focus();
 }
 
-function removeTx(ym, id) {
-  var txs = loadMonth(ym).filter(function (t) { return t.id !== id; });
-  saveMonth(ym, txs);
-  render();
+/* ---- app Diarista: R$150/visita; o id é o dia (o Mac liga à visita prevista pelo id) ---- */
+var diaState = { pago: true };
+
+function addDiaria() {
+  var err = $('diaErr');
+  var data = $('diaData').value;
+  var valor = parseValor($('diaValor').value);
+  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
+  if (!isFinite(valor)) { err.style.display = 'block'; err.textContent = 'Valor inválido — use 150,00.'; return; }
+  err.style.display = 'none';
+  guardar({
+    id: data + '-diarista', data: data, descricao: 'Diarista', valor: valor,
+    conta: 'c6', forma: 'pix', pago: diaState.pago, quem_pagou: 'conjunta',
+    tags: ['servicos'], orcamento: 'APARTAMENTO.DIARISTA', rateio: 'meio', para_quem: 'todos', origem: 'jotter'
+  });
+  toast('Visita registrada');
 }
 
-/* ===================== sync pelo Nostr (fatia 4) =====================
- * SOBE: cada rascunho vira um evento kind 30078 cifrado (NIP-44) para a chave do
- * Mac, assinado pela chave deste aparelho, com um `d` estável por lançamento
- * (editar republica com o mesmo `d`). BAIXA: o que o Mac publicou para este
- * aparelho — a configuração e os meses (livro + previsto). O Mac confirma o que
- * chega; até lá, o lançamento aparece aqui como «no Mac». */
+/* ---- app Água: os galões do mês → UMA despesa (itens[]), que vence dia 10 do mês seguinte.
+ * Os pedidos do mês ficam na própria app (Limpar não os apaga); cada pedido manda a conta
+ * de novo, com o mesmo id — no Mac, a versão nova. ---- */
+var LS_AGUA = 'f3budget.jotter.agua.';            // + AAAA-MM → [pedidos]
+var LS_AGUA_PRECO = 'f3budget.jotter.agua.preco';
+var agState = { tamanho: 10, qtd: 1 };
+
+function aguaPreco() { return loadCustom(LS_AGUA_PRECO, { '10': 11.10, '20': 20.00 }); }
+function aguaVenc(ym) {
+  var p = ym.split('-'), y = Number(p[0]), m = Number(p[1]) + 1;
+  if (m > 12) { m = 1; y += 1; }
+  return y + '-' + String(m).padStart(2, '0') + '-10';
+}
+function aguaItems(ym) { return loadCustom(LS_AGUA + ym, []); }
+
+function saveAguaItems(ym, items) {
+  var id = ym + '-agua-mineral';
+  saveCustom(LS_AGUA + ym, items);
+  if (!items.length) { tirar(id); return; }
+  guardar({
+    id: id, data: ym + '-01', descricao: 'Água mineral (galões)',
+    valor: Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100,
+    conta: 'c6', forma: 'debito', pago: false, quem_pagou: 'conjunta',
+    tags: ['alimentacao'], orcamento: 'APARTAMENTO.AGUA_MINERAL', rateio: 'meio', para_quem: 'todos',
+    vencimento: aguaVenc(ym), origem: 'consumo',
+    obs: 'Tally de galões (app Água). Vence dia 10 do mês seguinte; a despesa é do mês de consumo.',
+    itens: items
+  });
+}
+
+function addAgua() {
+  var err = $('agErr'); err.style.display = 'none';
+  var data = $('agData').value;
+  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
+  var preco = aguaPreco(), unit = Number(preco[String(agState.tamanho)]);
+  if (!isFinite(unit) || unit <= 0) { err.style.display = 'block'; err.textContent = 'Defina o preço do galão ' + agState.tamanho + 'L.'; return; }
+  var qtd = agState.qtd, tam = agState.tamanho, ym = data.slice(0, 7);
+  var items = aguaItems(ym);
+  items.push({
+    data: data, descricao: qtd + '× galão ' + tam + 'L', tipo: 'produto',
+    quantidade: qtd, tamanho: tam, preco_unitario: unit, valor: Math.round(unit * qtd * 100) / 100
+  });
+  items.sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0; });
+  saveAguaItems(ym, items);
+  renderAgua();
+  toast(qtd + ' galão(ões) ' + tam + 'L');
+}
+
+function removeAguaItem(ym, idx) {
+  var items = aguaItems(ym);
+  items.splice(idx, 1);
+  saveAguaItems(ym, items);
+  renderAgua();
+}
+
+function renderAgua() {
+  var ym = ($('agData').value || todayISO()).slice(0, 7);
+  $('agMonthTitle').textContent = 'Conta — ' + labelMes(ym);
+  var items = aguaItems(ym);
+  var total = Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100;
+  var galoes = items.reduce(function (a, it) { return a + (it.quantidade || 0); }, 0);
+  $('agTotal').textContent = items.length ? fmtBRL(total) : '';
+  $('agVenc').textContent = items.length ? (galoes + ' galões · vence ' + fmtData(aguaVenc(ym))) : '';
+  var list = $('agList'); list.textContent = '';
+  if (!items.length) {
+    var e = document.createElement('div'); e.className = 'empty';
+    e.textContent = 'Nenhum pedido em ' + labelMes(ym) + '.'; list.appendChild(e); return;
+  }
+  items.forEach(function (it, idx) {
+    var row = document.createElement('div'); row.className = 'tx';
+    var info = document.createElement('div'); info.className = 'info';
+    var d1 = document.createElement('div'); d1.className = 'desc';
+    d1.textContent = it.descricao || (it.quantidade + '× galão ' + it.tamanho + 'L');
+    var d2 = document.createElement('div'); d2.className = 'meta';
+    d2.textContent = fmtData(it.data) + ' · ' + fmtBRL(it.preco_unitario) + '/galão';
+    info.appendChild(d1); info.appendChild(d2);
+    var val = document.createElement('div'); val.className = 'val'; val.textContent = fmtBRL(it.valor);
+    var rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.textContent = '✕';
+    rm.setAttribute('aria-label', 'Remover pedido');
+    rm.addEventListener('click', function () { if (confirm('Remover este pedido?')) removeAguaItem(ym, idx); });
+    row.appendChild(info); row.appendChild(val); row.appendChild(rm);
+    list.appendChild(row);
+  });
+}
+
+function loadAguaPrices() {
+  var p = aguaPreco();
+  $('agP10').value = String(p['10']).replace('.', ',');
+  $('agP20').value = String(p['20']).replace('.', ',');
+}
+function onAguaPriceChange() {
+  var p10 = parseValor($('agP10').value), p20 = parseValor($('agP20').value);
+  if (isFinite(p10) && isFinite(p20)) { saveCustom(LS_AGUA_PRECO, { '10': p10, '20': p20 }); renderAgua(); }
+}
+
+/* ===================== Nostr: só a ida =====================
+ * Cada mensagem vira um evento kind 30078 cifrado (NIP-44) para a chave do Mac, assinado pela
+ * chave deste aparelho, com um `d` estável por lançamento. Nada é baixado do Mac, a não ser o
+ * «pareado» do pareamento. */
 
 var NT = window.NostrTools;
 var RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://nostr.mom', 'wss://offchain.pub'];
 var KIND = 30078;
 var LS_SK = 'nostr.sk', LS_MAC = 'nostr.mac', LS_PAREADO = 'nostr.pareado';  // os mesmos do teste: o pareamento vale
-var LS_D = 'f3budget.jotter.d';               // {id do lançamento: d do evento}
-var LS_REMOTE = 'f3budget.jotter.remote.';    // + AAAA-MM → {ledger, forecast, gerado_em} do Mac
-var LS_SYNCED = 'f3budget.jotter.synced.';    // + AAAA-MM → {id: true} já enviados
-
-function hex(b) { return Array.from(b, function (x) { return x.toString(16).padStart(2, '0'); }).join(''); }
-function unhex(h) { return Uint8Array.from(h.match(/../g).map(function (x) { return parseInt(x, 16); })); }
-function aleatorio(n) { return hex(crypto.getRandomValues(new Uint8Array(n))); }
 
 var SK = loadCustom(LS_SK, null);
 if (!SK) { SK = hex(NT.generateSecretKey()); saveCustom(LS_SK, SK); }
@@ -918,120 +708,48 @@ var MINHA = NT.getPublicKey(unhex(SK));
 function macPub() { return loadCustom(LS_MAC, null); }
 function conversa() { return NT.nip44.v2.utils.getConversationKey(unhex(SK), macPub()); }
 function getIdent() { return loadCustom(LS_PAREADO, null); }   // {pessoa, dispositivo}
-function getSynced(ym){ return loadCustom(LS_SYNCED + ym, {}); }
-function saveSynced(ym, o){ saveCustom(LS_SYNCED + ym, o); }
-function getRemote(ym){ return loadCustom(LS_REMOTE + ym, null); }
-function saveRemote(ym, doc){ saveCustom(LS_REMOTE + ym, doc); }
 function dDe(id) { var m = loadCustom(LS_D, {}); if (!m[id]) { m[id] = aleatorio(16); saveCustom(LS_D, m); } return m[id]; }
-
-/* os meses que têm rascunho neste aparelho */
-function mesesLocais() {
-  var out = [];
-  for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i);
-    if (k && k.indexOf(LS_PREFIX) === 0) out.push(k.slice(LS_PREFIX.length));
-  }
-  return out.sort();
-}
-
 function comPrazo(p, ms) { return Promise.race([p, new Promise(function (_, r) { setTimeout(function () { r('prazo'); }, ms); })]); }
 
-var syncing = false;
-function sincronizar(silencioso) {
-  if (syncing) return;
-  if (!macPub()) { if (!silencioso) { openCfg(); toast('Pareie com o Mac primeiro'); } return; }
+var enviando = false;
+function enviar(silencioso) {
+  if (enviando) return;
+  var fila = aEnviar();
+  if (!fila.length) { if (!silencioso) toast('Nada a enviar'); return; }
+  if (!macPub() || !getIdent()) { if (!silencioso) { openCfg(); toast('Pareie com o Mac primeiro'); } return; }
   if (!navigator.onLine) { if (!silencioso) toast('Sem rede — fica guardado aqui'); return; }
-  syncing = true;
-  setSyncBusy('Sincronizando…');
-  var pool = new NT.SimplePool(), enviados = 0, falhas = 0, conv = conversa();
+  enviando = true;
+  $('btnEnviar').disabled = true; $('btnEnviar').textContent = 'Enviando…';
+  var pool = new NT.SimplePool(), conv = conversa(), enviados = 0, falhas = 0;
   var chain = Promise.resolve();
-  mesesLocais().forEach(function (ym) {
-    var synced = getSynced(ym);
-    loadMonth(ym).filter(function (t) { return !synced[t.id]; }).forEach(function (t) {
-      chain = chain.then(function () {
-        var quando = Math.floor(Date.now() / 1000);
-        var ev = NT.finalizeEvent({ kind: KIND, created_at: quando,
-          tags: [['d', dDe(t.id)], ['p', macPub()]],
-          content: NT.nip44.v2.encrypt(JSON.stringify({ f3: 'tx', v: 3, tx: t }), conv) }, unhex(SK));
-        return Promise.allSettled(pool.publish(RELAYS, ev).map(function (p) { return comPrazo(p, 8000); }))
-          .then(function (res) {
-            if (res.some(function (r) { return r.status === 'fulfilled'; })) { synced[t.id] = quando; saveSynced(ym, synced); enviados++; }
-            else falhas++;
-          });
-      });
+  fila.forEach(function (m) {
+    chain = chain.then(function () {
+      var quando = Math.floor(Date.now() / 1000);
+      var ev = NT.finalizeEvent({ kind: KIND, created_at: quando,
+        tags: [['d', dDe(m.tx.id)], ['p', macPub()]],
+        content: NT.nip44.v2.encrypt(JSON.stringify({ f3: 'tx', v: 3, tx: m.tx }), conv) }, unhex(SK));
+      return Promise.allSettled(pool.publish(RELAYS, ev).map(function (p) { return comPrazo(p, 8000); }))
+        .then(function (res) {
+          if (!res.some(function (r) { return r.status === 'fulfilled'; })) { falhas++; return; }
+          // grava só nesta mensagem, e só se ela não mudou enquanto saía
+          var ms = loadMsgs();
+          ms.forEach(function (x) { if (x.tx.id === m.tx.id && JSON.stringify(x.tx) === JSON.stringify(m.tx)) x.enviado = quando; });
+          saveMsgs(ms);
+          enviados++;
+        });
     });
   });
-  chain.then(function () {
-    // o que o Mac publicou para ESTE aparelho: config e meses
-    return comPrazo(pool.querySync(RELAYS, { kinds: [KIND], authors: [macPub()], '#p': [MINHA] }), 12000);
-  }).then(function (evs) {
-    var novaConfig = null, meses = 0;
-    (evs || []).sort(function (a, b) { return a.created_at - b.created_at; }).forEach(function (ev) {
-      try {
-        var c = JSON.parse(NT.nip44.v2.decrypt(ev.content, conv));
-        if (c.f3 === 'config') novaConfig = c;
-        else if (c.f3 === 'mes' && c.ym) {
-          saveRemote(c.ym, { ledger: c.ledger || [], forecast: c.forecast || [], gerado_em: c.gerado_em });
-          aplicarDescartados(c.ym, c.descartados || []);
-          meses++;
-        }
-        else if (c.f3 === 'pareado') saveCustom(LS_PAREADO, { pessoa: c.pessoa, dispositivo: c.dispositivo });
-      } catch (e) {}
-    });
-    if (novaConfig) aplicarConfig(novaConfig);
-    return meses;
-  }).catch(function () { return -1; }).then(function (meses) {
+  return chain.then(function () {
     try { pool.close(RELAYS); } catch (e) {}
-    syncing = false; render();
-    if (silencioso && !enviados) return;
-    toast((enviados ? enviados + ' enviado(s) · ' : '') + (falhas ? falhas + ' ficou(aram) para depois · ' : '') +
-          (meses >= 0 ? 'Mac: ' + meses + ' mês(es)' : 'não baixei do Mac agora'));
+    enviando = false;
+    render();
+    if (silencioso && !enviados && !falhas) return;
+    toast(enviados ? enviados + ' enviado(s)' + (falhas ? ' · ' + falhas + ' ficou(aram) para depois' : '')
+                   : 'Não saiu — fica guardado aqui');
   });
-}
-
-/* O Mac recusou (junk) ou desfez: apaga a cópia local — só se ELA foi enviada até o instante
- * do evento descartado (`ate`). Confirmar de novo a mesma visita, depois, não some.
- * `true` é o «enviado» de antes de 24/09/2026: conta como antigo. */
-function aplicarDescartados(ym, lista) {
-  if (!lista.length) return 0;
-  var synced = getSynced(ym), fora = {};
-  lista.forEach(function (d) { fora[d.id] = d.ate; });
-  var txs = loadMonth(ym), n = 0;
-  var ficam = txs.filter(function (t) {
-    var enviado = synced[t.id];
-    var sai = (t.id in fora) && enviado && (enviado === true || enviado <= fora[t.id]);
-    if (sai) { delete synced[t.id]; n++; }
-    return !sai;
-  });
-  if (n) { saveMonth(ym, ficam); saveSynced(ym, synced); }
-  return n;
-}
-
-/* ↶ desfazer: o que já saiu vai de novo, com o mesmo id, marcado `desfeito`. No Mac, o sync
- * recusa sozinho se não estava no livro; se estava, o commit dele tira. */
-function desfazer(ym, t) {
-  if (!confirm('Desfazer «' + t.descricao + '»? O Mac fica sabendo no próximo sincronizar.')) return;
-  var t2 = cloneObj(t);
-  delete t2.registrado_por; delete t2.confirmado_em;
-  t2.desfeito = true;
-  upsertLocal(ym, t2);
-  render();
-  toast('Desfazer: sai no próximo sincronizar');
-}
-
-/* a configuração do Mac chegou: guarda e refaz o que depende dela */
-function aplicarConfig(c) {
-  delete c.f3;
-  c.metaDescricao = CONFIG_MINIMA.metaDescricao;
-  saveCustom(LS_CONFIG, c);
-  CONFIG = c; CONFIG_DO_MAC = true; calcPct();
-  QUEM_OPTS[1].label = CONFIG.pessoas.felipe.nome; QUEM_OPTS[2].label = CONFIG.pessoas.natalia.nome;
-  buildOrcamentos(); buildContaSelect(); buildTagChips(); buildParaQuem(); updateRateioHint();
-  buildContainers(); buildLocais(); render();
 }
 
 /* ---- pareamento: o QR do `device pair` traz #m=<chave do Mac>&p=<código> ---- */
-function nomePessoa(k) { return CONFIG.pessoas[k] ? CONFIG.pessoas[k].nome : k; }
 function deB64(t) { try { var b = atob(t.replace(/-/g, '+').replace(/_/g, '/')); return hex(Uint8Array.from(b, function (c) { return c.charCodeAt(0); })); } catch (e) { return ''; } }
 
 function lerFragmento() {
@@ -1058,7 +776,7 @@ function parear(codigo) {
         var c = JSON.parse(NT.nip44.v2.decrypt(ev.content, conv));
         if (c.f3 === 'pareado' && ev.created_at >= desde) {
           saveCustom(LS_PAREADO, { pessoa: c.pessoa, dispositivo: c.dispositivo });
-          sub.close(); openCfg(); toast('Pareado ✓'); sincronizar(true);
+          sub.close(); openCfg(); toast('Pareado ✓'); enviar(true);
         }
       } catch (e) {}
     }
@@ -1070,598 +788,129 @@ function parear(codigo) {
   setTimeout(function () { try { sub.close(); } catch (e) {} }, 600000);
 }
 
-/* ---- cartão do ⚙ ---- */
 function openCfg() {
   var id = getIdent();
   $('cfgStatus').innerHTML = !macPub() ? 'Não pareado.'
-    : id ? ('<strong>Pareado como ' + nomePessoa(id.pessoa) + ' · ' + id.dispositivo + ' ✓</strong>')
+    : id ? ('<strong>Pareado como ' + id.pessoa + ' · ' + id.dispositivo + ' ✓</strong>')
          : 'Chave do Mac recebida; esperando o Mac confirmar o pareamento…';
-  var c = loadCustom(LS_CONFIG, null);
-  $('cfgInfo').textContent = 'Configuração do Mac: ' + (c ? 'recebida' : 'ainda não (chega no primeiro sincronizar)') +
-    ' · este aparelho: ' + MINHA.slice(0, 12) + '…';
+  $('cfgInfo').textContent = 'Este aparelho: ' + MINHA.slice(0, 12) + '…';
   $('cfgCard').hidden = false;
 }
 function closeCfg() { $('cfgCard').hidden = true; }
 
-/* ---- botão Sincronizar (mostra quantos faltam subir) ---- */
-function pendingCount() {
-  return mesesLocais().reduce(function (n, ym) {
-    var synced = getSynced(ym);
-    return n + loadMonth(ym).filter(function (t) { return !synced[t.id]; }).length;
-  }, 0);
-}
-function setSyncBusy(label) { var b = $('btnSync'); if (b) { b.textContent = label; b.disabled = true; } }
-function updateSyncBtn() {
-  var b = $('btnSync'); if (!b) return;
-  b.disabled = false;
-  var n = pendingCount(currentMonth());
-  b.textContent = n ? ('Sincronizar (' + n + ' a enviar)') : 'Sincronizar';
-}
+/* ===================== Limpar e Exportar ===================== */
 
-/* ---- une o que o Mac confirmou (livro + previsto) com o que está neste aparelho ----
- * origem: 'remoto' (no livro do Mac), 'previsto' (previsão do Mac), 'local' (daqui).
- * Local pendente = ainda não saiu; local enviado = saiu, e espera o Mac confirmar.
- * O local vence o remoto de mesmo id enquanto não for confirmado: confirmar a
- * visita da diarista aqui não pode sumir atrás da previsão que veio do Mac. */
-function mergedTxs(ym) {
-  var local = loadMonth(ym);
-  var remoteDoc = getRemote(ym) || {};
-  var synced = getSynced(ym);
-  var noLivro = {}, out = [], visto = {};
-  (remoteDoc.ledger || []).forEach(function (t) { noLivro[t.id] = t; });
-  local.forEach(function (t) {
-    var r = noLivro[t.id];
-    var confirmado = r && JSON.stringify(Object.assign({}, r, { registrado_por: 0, confirmado_em: 0 })) ===
-                          JSON.stringify(Object.assign({}, t, { registrado_por: 0, confirmado_em: 0 }));
-    // o Mac já tem: fica o dele — menos o pedido de desfazer, que aparece como tal até ele decidir
-    if (r && !t.desfeito && (confirmado || synced[t.id] && r.confirmado_em)) return;
-    visto[t.id] = true;
-    out.push({ tx: t, origem: 'local', pendente: !synced[t.id] });
-  });
-  (remoteDoc.ledger || []).forEach(function (t) { if (!visto[t.id]) { visto[t.id] = true; out.push({ tx: t, origem: 'remoto' }); } });
-  (remoteDoc.forecast || []).forEach(function (t) {
-    if (!visto[t.id] && !t.realizado_por && !t.cancelada) { visto[t.id] = true; out.push({ tx: t, origem: 'previsto' }); }
-  });
-  return out;
-}
-
-function mkBadge(text, variant) {
-  var b = document.createElement('span');
-  b.className = 'badge' + (variant ? ' ' + variant : '');
-  b.textContent = text;
-  return b;
-}
-
-/* ===================== apps / navegação ===================== */
-var SCREENS = ['home', 'gasto', 'agua', 'diarista'];
-function showScreen(name) {
-  SCREENS.forEach(function (s) { var el = $('screen-' + s); if (el) el.hidden = (s !== name); });
-  $('backBtn').hidden = (name === 'home');
-  if (name === 'gasto') render();
-  if (name === 'diarista') renderDiarista();
-  if (name === 'agua') renderAgua();
-  window.scrollTo(0, 0);
-}
-
-var DIAS_SEM = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
-function weekdayLabel(iso) {
-  var p = iso.split('-');
-  return DIAS_SEM[new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2])).getDay()];
-}
-
-/* upsert local por id + reabre p/ re-sync se a id já tinha subido (ex.: confirmar previsão) */
-function upsertLocal(ym, tx) {
-  var txs = loadMonth(ym), found = false;
-  for (var i = 0; i < txs.length; i++) { if (txs[i].id === tx.id) { txs[i] = tx; found = true; break; } }
-  if (!found) txs.push(tx);
-  saveMonth(ym, txs);
-  var synced = getSynced(ym);
-  if (synced[tx.id]) { delete synced[tx.id]; saveSynced(ym, synced); }
-}
-
-/* ---- app Diarista: preset R$150/visita; id determinístico por dia → upsert sobre a previsão ---- */
-var diaState = { pago: true };
-
-function addDiaria() {
-  var err = $('diaErr');
-  var data = $('diaData').value;
-  var valor = parseValor($('diaValor').value);
-  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
-  if (!isFinite(valor)) { err.style.display = 'block'; err.textContent = 'Valor inválido — use 150,00.'; return; }
-  err.style.display = 'none';
-  var ym = data.slice(0, 7);
-  var tx = {
-    id: data + '-diarista', data: data, descricao: 'Diarista', valor: valor,
-    conta: 'c6', forma: 'pix', pago: diaState.pago, quem_pagou: 'conjunta',
-    tags: ['servicos'], orcamento: 'APARTAMENTO.DIARISTA', rateio: 'meio', para_quem: 'todos', origem: 'jotter'
-  };
-  // havendo a visita prevista pelo Mac nesse dia, o lançamento a realiza (o commit liga os dois)
-  if (((getRemote(ym) || {}).forecast || []).some(function (p) { return p.id === tx.id && !p.cancelada; }))
-    tx.realiza = tx.id;
-  upsertLocal(ym, tx);
-  renderDiarista();
-  toast('Visita registrada');
-}
-
-function renderDiarista() {
-  var ym = ($('diaData').value || todayISO()).slice(0, 7);
-  $('diaMonthTitle').textContent = 'Visitas — ' + labelMes(ym);
-  var rows = mergedTxs(ym).filter(function (m) { return m.tx.orcamento === 'APARTAMENTO.DIARISTA'; })
-    .sort(function (a, b) { return a.tx.data < b.tx.data ? -1 : a.tx.data > b.tx.data ? 1 : 0; });
-
-  var pagas = 0, totalPago = 0;
-  rows.forEach(function (m) { if (m.tx.pago && typeof m.tx.valor === 'number') { pagas++; totalPago += m.tx.valor; } });
-  $('diaTotal').textContent = rows.length ? (pagas + '× · ' + fmtBRL(Math.round(totalPago * 100) / 100)) : '';
-
-  var list = $('diaList'); list.textContent = '';
-  if (!rows.length) {
-    var e = document.createElement('div'); e.className = 'empty';
-    e.textContent = 'Nenhuma visita/previsão em ' + labelMes(ym) + '.';
-    list.appendChild(e); return;
-  }
-  rows.forEach(function (m) {
-    var t = m.tx;
-    var row = document.createElement('div'); row.className = 'tx';
-    var info = document.createElement('div'); info.className = 'info';
-    var d1 = document.createElement('div'); d1.className = 'desc';
-    d1.textContent = t.data.slice(8) + '/' + t.data.slice(5, 7) + ' · ' + weekdayLabel(t.data);
-    d1.appendChild(document.createTextNode(' '));
-    d1.appendChild(mkBadge(t.pago ? 'veio' : 'previsto', t.pago ? 'mine' : ''));
-    var d2 = document.createElement('div'); d2.className = 'meta'; d2.textContent = 'rateio meio · conjunta';
-    info.appendChild(d1); info.appendChild(d2);
-    var val = document.createElement('div');
-    val.className = 'val' + (t.pago ? '' : ' pend');
-    val.textContent = typeof t.valor === 'number' ? fmtBRL(t.valor) : '—';
-    row.appendChild(info); row.appendChild(val);
-    if (!t.pago) {  // confirmar previsão → vira "veio"
-      var ok = document.createElement('button');
-      ok.className = 'rm'; ok.type = 'button'; ok.textContent = '✓';
-      ok.style.color = 'var(--green)';
-      ok.setAttribute('aria-label', 'Confirmar visita de ' + t.data);
-      ok.addEventListener('click', function () {
-        var t2 = {}; for (var k in t) t2[k] = t[k];
-        t2.pago = true; t2.origem = 'jotter';
-        if (m.origem === 'previsto') t2.realiza = t.id;   // o commit no Mac liga à previsão
-        if (t2.valor === null || t2.valor === undefined)  // previsão não tinha valor real
-          t2.valor = (typeof t2.estimativa === 'number' ? t2.estimativa : 150);
-        upsertLocal(ym, t2); renderDiarista(); toast('Confirmada');
-      });
-      row.appendChild(ok);
-    }
-    list.appendChild(row);
-  });
-}
-
-/* ---- app Água: tally de galões → 1 despesa/mês (itens[]); vence dia 10 do mês seguinte ---- */
-var LS_AGUA_PRECO = 'f3budget.jotter.agua.preco';
-var agState = { tamanho: 10, qtd: 1 };
-
-function cloneObj(o) { var r = {}; for (var k in o) r[k] = o[k]; return r; }
-function fmtData(iso) { return iso.slice(8) + '/' + iso.slice(5, 7); }
-function aguaPreco() { return loadCustom(LS_AGUA_PRECO, { '10': 11.10, '20': 20.00 }); }
-
-/* vencimento = dia 10 do mês seguinte ao consumo */
-function aguaVenc(ym) {
-  var p = ym.split('-'), y = Number(p[0]), m = Number(p[1]) + 1;
-  if (m > 12) { m = 1; y += 1; }
-  return y + '-' + String(m).padStart(2, '0') + '-10';
-}
-
-function aguaTxOf(ym) {
-  var txs = loadMonth(ym);
-  for (var i = 0; i < txs.length; i++) if (txs[i].id === ym + '-agua-mineral') return txs[i];
-  return null;
-}
-function aguaItems(ym) { var t = aguaTxOf(ym); return (t && t.itens) ? t.itens.slice() : []; }
-
-function saveAguaItems(ym, items) {
-  var idAgua = ym + '-agua-mineral';
-  if (!items.length) {  // sem pedidos → tira a despesa do mês
-    saveMonth(ym, loadMonth(ym).filter(function (t) { return t.id !== idAgua; }));
-    var s = getSynced(ym); if (s[idAgua]) { delete s[idAgua]; saveSynced(ym, s); }
-    return;
-  }
-  var valor = Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100;
-  var ex = aguaTxOf(ym);
-  var tx = ex ? cloneObj(ex) : {
-    id: idAgua, data: ym + '-01', descricao: 'Água mineral (galões)',
-    conta: 'c6', forma: 'debito', pago: false, quem_pagou: 'conjunta',
-    tags: ['alimentacao'], orcamento: 'APARTAMENTO.AGUA_MINERAL', rateio: 'meio', para_quem: 'todos',
-    vencimento: aguaVenc(ym), origem: 'consumo',
-    obs: 'Tally de galões (app Água). Vence dia 10 do mês seguinte; a despesa é do mês de consumo.'
-  };
-  tx.itens = items; tx.valor = valor;
-  if (!tx.vencimento) tx.vencimento = aguaVenc(ym);
-  upsertLocal(ym, tx);
-}
-
-function addAgua() {
-  var err = $('agErr'); err.style.display = 'none';
-  var data = $('agData').value;
-  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
-  var preco = aguaPreco(), unit = Number(preco[String(agState.tamanho)]);
-  if (!isFinite(unit) || unit <= 0) { err.style.display = 'block'; err.textContent = 'Defina o preço do galão ' + agState.tamanho + 'L.'; return; }
-  var qtd = agState.qtd, tam = agState.tamanho;
-  var items = aguaItems(data.slice(0, 7));
-  items.push({
-    data: data, descricao: qtd + '× galão ' + tam + 'L', tipo: 'produto',
-    quantidade: qtd, tamanho: tam, preco_unitario: unit, valor: Math.round(unit * qtd * 100) / 100
-  });
-  items.sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0; });
-  saveAguaItems(data.slice(0, 7), items);
-  renderAgua();
-  toast(qtd + ' galão(ões) ' + tam + 'L');
-}
-
-function removeAguaItem(ym, idx) {
-  var items = aguaItems(ym);
-  items.splice(idx, 1);
-  saveAguaItems(ym, items);
-  renderAgua();
-}
-
-function renderAgua() {
-  var ym = ($('agData').value || todayISO()).slice(0, 7);
-  $('agMonthTitle').textContent = 'Conta — ' + labelMes(ym);
-  var items = aguaItems(ym);
-  var total = Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100;
-  var galoes = items.reduce(function (a, it) { return a + (it.quantidade || 0); }, 0);
-  var t = aguaTxOf(ym);
-  $('agTotal').textContent = items.length ? fmtBRL(total) : '';
-  $('agVenc').textContent = items.length
-    ? (galoes + ' galões · vence ' + fmtData(aguaVenc(ym)) + (t && t.pago ? ' · já paga' : ''))
-    : '';
-
-  var list = $('agList'); list.textContent = '';
-  if (!items.length) {
-    var e = document.createElement('div'); e.className = 'empty';
-    e.textContent = 'Nenhum pedido em ' + labelMes(ym) + '.'; list.appendChild(e); return;
-  }
-  items.forEach(function (it, idx) {
-    var row = document.createElement('div'); row.className = 'tx';
-    var info = document.createElement('div'); info.className = 'info';
-    var d1 = document.createElement('div'); d1.className = 'desc';
-    d1.textContent = it.descricao || (it.quantidade + '× galão ' + it.tamanho + 'L');
-    var d2 = document.createElement('div'); d2.className = 'meta';
-    d2.textContent = fmtData(it.data) + ' · ' + fmtBRL(it.preco_unitario) + '/galão';
-    info.appendChild(d1); info.appendChild(d2);
-    var val = document.createElement('div'); val.className = 'val'; val.textContent = fmtBRL(it.valor);
-    var rm = document.createElement('button'); rm.className = 'rm'; rm.type = 'button'; rm.textContent = '✕';
-    rm.setAttribute('aria-label', 'Remover pedido');
-    rm.addEventListener('click', (function (index) {
-      return function () { if (confirm('Remover este pedido?')) removeAguaItem(ym, index); };
-    })(idx));
-    row.appendChild(info); row.appendChild(val); row.appendChild(rm);
-    list.appendChild(row);
-  });
-}
-
-function loadAguaPrices() {
-  var p = aguaPreco();
-  $('agP10').value = String(p['10']).replace('.', ',');
-  $('agP20').value = String(p['20']).replace('.', ',');
-}
-function onAguaPriceChange() {
-  var p10 = parseValor($('agP10').value), p20 = parseValor($('agP20').value);
-  if (isFinite(p10) && isFinite(p20)) { saveCustom(LS_AGUA_PRECO, { '10': p10, '20': p20 }); renderAgua(); }
-}
-
-/* ========================= lista do mês ========================= */
-
-function rateioLabel(r) {
-  if (typeof r === 'object' && r !== null) return 'split';
-  return { casal: 'casal', meio: 'meio', felipe: 'Felipe', natalia: 'Natália' }[r] || r;
-}
-
-var FORMA_LABELS = { credito: 'crédito', debito: 'débito', pix: 'pix', dinheiro: 'dinheiro' };
-function formaLabel(f) { return FORMA_LABELS[f] || f || ''; }
-
-function quemLabel(q) {
-  if (q === 'conjunta') return 'Conjunta';
-  return CONFIG.pessoas[q] ? CONFIG.pessoas[q].nome : q;
-}
-
-/* ===================== onde estou (5c) =====================
- * O container é uma pasta, e o caminho é o nome (`casa/jantar-riomar`); sem ele, `casa`.
- * A lista vem do Mac (config); um nome novo vai no lançamento e o Mac o adota no commit.
- * «Onde estou» fica guardado: na viagem, tudo o que se lança cai nela até mudar. */
-var LS_ONDE = 'f3budget.jotter.onde', LS_LOCAIS = 'f3budget.jotter.locais';
-
-function normContainer(s) {
-  var partes = String(s || '').split('/').map(function (p) {
-    return p.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace(/^[0-9-]+/, '');
-  }).filter(Boolean).slice(0, 3);
-  return partes.length ? partes.join('/') : 'casa';
-}
-function ondeAtual() { return normContainer($('fContainer').value); }
-
-function todosContainers() {
-  var cs = { casa: true };
-  Object.keys(CONFIG.containers || {}).forEach(function (c) { cs[c] = true; });
-  mesesLocais().forEach(function (ym) {
-    loadMonth(ym).forEach(function (t) { if (t.container) cs[t.container] = true; });
-  });
-  return Object.keys(cs).sort();
-}
-
-function buildContainers() {
-  var dl = $('dlContainers'); dl.textContent = '';
-  todosContainers().forEach(function (c) { var o = document.createElement('option'); o.value = c; dl.appendChild(o); });
-  var c = ondeAtual();
-  $('containerHint').textContent = todosContainers().indexOf(c) >= 0 ? ''
-    : 'novo: «' + c + '» — o Mac cria quando confirmar';
-}
-
-function onContainerChange() {
-  var c = ondeAtual();
-  $('fContainer').value = c;
-  saveCustom(LS_ONDE, c);
-  buildContainers();
-  render();
-}
-
-function todosLocais() {
-  var ls = {};
-  loadCustom(LS_LOCAIS, []).forEach(function (l) { ls[l] = true; });
-  for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i);
-    if (k.indexOf(LS_REMOTE) !== 0) continue;
-    var doc = loadCustom(k, {}) || {};
-    (doc.ledger || []).concat(doc.forecast || []).forEach(function (t) { if (t.local) ls[t.local] = true; });
-  }
-  return Object.keys(ls).sort();
-}
-function lembrarLocal(l) {
-  var ls = loadCustom(LS_LOCAIS, []);
-  if (ls.indexOf(l) < 0) { ls.push(l); saveCustom(LS_LOCAIS, ls); }
-  buildLocais();
-}
-function buildLocais() {
-  var dl = $('dlLocais'); dl.textContent = '';
-  todosLocais().forEach(function (l) { var o = document.createElement('option'); o.value = l; dl.appendChild(o); });
-}
-
-/* ---- o previsto do container onde estou: um toque confirma, ou corrige o valor antes ----
- * Confirmar é lançar com o MESMO id da previsão e `realiza: <id>`: o commit no Mac liga
- * os dois e a previsão sai de «quanto falta». */
-function previstoAqui(ym) {
-  var c = ondeAtual(), local = {};
-  loadMonth(ym).forEach(function (t) { local[t.id] = true; if (t.realiza) local[t.realiza] = true; });
-  return ((getRemote(ym) || {}).forecast || []).filter(function (t) {
-    return !t.realizado_por && !t.cancelada && (t.tipo || 'despesa') === 'despesa'
-      && (t.container || 'casa') === c && !local[t.id];
-  }).sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0; });
-}
-
-function confirmarPrevisao(ym, t, valor) {
-  var tx = cloneObj(t);
-  delete tx.realizado_por; delete tx.cancelada; delete tx.migrada;
-  tx.valor = valor; tx.pago = true; tx.origem = 'jotter'; tx.realiza = t.id;
-  upsertLocal(ym, tx);
-  render();
-  toast('Confirmado');
-}
-
-function renderPrevisto(ym) {
-  var rows = previstoAqui(ym), list = $('prevList');
-  $('prevCard').hidden = !rows.length;
-  list.textContent = '';
-  if (!rows.length) return;
-  $('prevTitle').textContent = 'Previstos não confirmados — ' + ondeAtual() + ' · ' + labelMes(ym);
-  var total = rows.reduce(function (a, t) { return a + (typeof t.valor === 'number' ? t.valor : (t.estimativa || 0)); }, 0);
-  $('prevTotal').textContent = rows.length + '× · ' + fmtBRL(Math.round(total * 100) / 100);
-  rows.forEach(function (t) {
-    var row = document.createElement('div'); row.className = 'tx';
-    var info = document.createElement('div'); info.className = 'info';
-    var d1 = document.createElement('div'); d1.className = 'desc';
-    d1.textContent = t.descricao;
-    var d2 = document.createElement('div'); d2.className = 'meta';
-    d2.textContent = fmtData(t.data) + ' · ' + weekdayLabel(t.data) + (t.vencimento && t.vencimento !== t.data
-      ? ' · vence ' + fmtData(t.vencimento) : '');
-    info.appendChild(d1); info.appendChild(d2);
-    var inp = document.createElement('input');
-    inp.type = 'text'; inp.inputMode = 'decimal'; inp.className = 'prev-valor';
-    inp.style.width = '6.5em'; inp.style.textAlign = 'right';
-    var est = typeof t.valor === 'number' ? t.valor : t.estimativa;
-    inp.value = typeof est === 'number' ? est.toFixed(2).replace('.', ',') : '';
-    inp.setAttribute('aria-label', 'Valor de ' + t.descricao);
-    var ok = document.createElement('button');
-    ok.className = 'rm'; ok.type = 'button'; ok.textContent = '✓';
-    ok.style.color = 'var(--green)';
-    ok.setAttribute('aria-label', 'Confirmar ' + t.descricao);
-    ok.addEventListener('click', function () {
-      var v = parseValor(inp.value);
-      if (!isFinite(v)) { toast('Valor inválido'); inp.focus(); return; }
-      confirmarPrevisao(ym, t, v);
-    });
-    row.appendChild(info); row.appendChild(inp); row.appendChild(ok);
-    list.appendChild(row);
-  });
-}
-
-function render() {
-  var ym = currentMonth();
-  renderPrevisto(ym);
-  var merged = mergedTxs(ym).filter(function (m) { return m.origem !== 'previsto'; }).sort(function (a, b) {
-    return a.tx.data < b.tx.data ? -1 : a.tx.data > b.tx.data ? 1 : 0;
-  });
-
-  $('monthTitle').textContent = 'Lançamentos — ' + labelMes(ym);
-
-  var total = 0;
-  merged.forEach(function (m) { if (typeof m.tx.valor === 'number') total += m.tx.valor; });
-  $('monthTotal').textContent = merged.length ? fmtBRL(Math.round(total * 100) / 100) : '';
-
-  var list = $('txList');
-  list.textContent = '';
-  if (!merged.length) {
-    var e = document.createElement('div');
-    e.className = 'empty';
-    e.textContent = 'Nenhum lançamento em ' + labelMes(ym) + '.';
-    list.appendChild(e);
-    updateSyncBtn();
-    return;
-  }
-
-  var ident = getIdent() || {};
-  var contasMap = allContas();
-  function linha(m) {
-    var t = m.tx;
-    var row = document.createElement('div');
-    row.className = 'tx';
-
-    var info = document.createElement('div');
-    info.className = 'info';
-
-    var d1 = document.createElement('div');
-    d1.className = 'desc';
-    d1.textContent = t.descricao;
-    // proveniência: quem digitou (remoto) ou "a enviar" (rascunho local)
-    if (m.origem === 'remoto' && t.registrado_por) {
-      var mine = ident.dispositivo && t.registrado_por.dispositivo === ident.dispositivo;
-      d1.appendChild(document.createTextNode(' '));
-      d1.appendChild(mkBadge(mine ? '☁ você' : '☁ ' + nomePessoa(t.registrado_por.pessoa), mine ? 'mine' : 'cloud'));
-    } else if (m.origem === 'local' && t.desfeito) {
-      d1.appendChild(document.createTextNode(' '));
-      d1.appendChild(mkBadge(m.pendente ? '↶ desfazer: a enviar' : '↶ desfazer: no Mac', m.pendente ? 'up' : 'cloud'));
-    } else if (m.origem === 'local' && m.pendente) {
-      d1.appendChild(document.createTextNode(' '));
-      d1.appendChild(mkBadge('⬆ enviar', 'up'));
-    } else if (m.origem === 'local') {
-      d1.appendChild(document.createTextNode(' '));
-      d1.appendChild(mkBadge('✉ no Mac', 'cloud'));    // enviado; o Mac ainda não confirmou
-    } else if (m.origem === 'previsto') {
-      d1.appendChild(document.createTextNode(' '));
-      d1.appendChild(mkBadge('previsto', ''));
-    }
-    if (!t.pago) {
-      d1.appendChild(document.createTextNode(' '));
-      d1.appendChild(mkBadge('não pago', ''));   // status do gasto (≠ sync); "quanto ainda vamos gastar"
-    }
-
-    var d2 = document.createElement('div');
-    d2.className = 'meta';
-    d2.textContent = t.data.slice(8) + '/' + t.data.slice(5, 7) +
-      ' · ' + (t.orcamento || 'a classificar') +
-      ' · ' + rateioLabel(t.rateio) +
-      ' · ' + (contasMap[t.conta] ? contasMap[t.conta].nome : t.conta) +
-      ' · ' + formaLabel(t.forma) +
-      ' · pagou: ' + quemLabel(t.quem_pagou) +
-      (t.container && t.container !== 'casa' ? ' · 📍 ' + t.container : '') +
-      (t.local ? ' · @ ' + t.local : '');
-
-    info.appendChild(d1);
-    info.appendChild(d2);
-
-    if (t.tags && t.tags.length) {
-      var tg = document.createElement('div');
-      tg.className = 'minichips';
-      t.tags.forEach(function (tag) {
-        var c = document.createElement('span');
-        c.className = 'minichip';
-        c.textContent = tag;
-        tg.appendChild(c);
-      });
-      info.appendChild(tg);
-    }
-
-    var val = document.createElement('div');
-    val.className = 'val' + (typeof t.valor === 'number' && t.valor < 0 ? ' neg' : '') + (t.pago ? '' : ' pend');
-    val.textContent = typeof t.valor === 'number' ? fmtBRL(t.valor) : '—';
-
-    row.appendChild(info);
-    row.appendChild(val);
-
-    // remover só o que ainda é rascunho local (não enviado). O que já está no
-    // servidor não se apaga do aparelho (deleção server-side fica p/ depois).
-    if (m.origem === 'local' && m.pendente && !t.desfeito) {
-      var rm = document.createElement('button');
-      rm.className = 'rm';
-      rm.type = 'button';
-      rm.textContent = '✕';
-      rm.setAttribute('aria-label', 'Remover ' + t.descricao);
-      rm.addEventListener('click', function () {
-        if (confirm('Remover "' + t.descricao + '"?')) removeTx(ym, t.id);
-      });
-      row.appendChild(rm);
-    }
-
-    // ↶ desfazer: o que este aparelho já enviou (no Mac, ou já no livro)
-    var meu = m.origem === 'remoto' && t.registrado_por && ident.dispositivo &&
-              t.registrado_por.dispositivo === ident.dispositivo;
-    if (((m.origem === 'local' && !m.pendente) || meu) && !t.desfeito) {
-      var un = document.createElement('button');
-      un.className = 'rm'; un.type = 'button'; un.textContent = '↶';
-      un.setAttribute('aria-label', 'Desfazer ' + t.descricao);
-      un.addEventListener('click', function () { desfazer(ym, t); });
-      row.appendChild(un);
-    }
-    return row;
-  }
-
-  // as seções: o que falta enviar, o que o Mac ainda não confirmou, e o que já está no livro
-  var limpos = loadCustom(LS_LIMPOS + ym, []);
-  var secoes = [
-    { nome: 'A enviar', itens: merged.filter(function (m) { return m.origem === 'local' && m.pendente; }) },
-    { nome: 'No Mac, aguardando', itens: merged.filter(function (m) { return m.origem === 'local' && !m.pendente; }) },
-    { nome: 'Confirmados', confirmados: true,
-      itens: merged.filter(function (m) { return m.origem === 'remoto' && limpos.indexOf(m.tx.id) < 0; }) }
-  ];
-  var aberto = loadCustom(LS_CONF_ABERTO, false);
-  secoes.forEach(function (sec) {
-    if (!sec.itens.length && !(sec.confirmados && limpos.length)) return;
-    var h = document.createElement('div'); h.className = 'secao';
-    var titulo = document.createElement('span');
-    titulo.textContent = sec.nome + ' · ' + sec.itens.length;
-    h.appendChild(titulo);
-    if (sec.confirmados) {
-      var acoes = document.createElement('span');
-      var abre = document.createElement('button'); abre.type = 'button';
-      abre.textContent = aberto ? 'fechar' : 'mostrar';
-      abre.addEventListener('click', function () { saveCustom(LS_CONF_ABERTO, !aberto); render(); });
-      acoes.appendChild(abre);
-      if (sec.itens.length) {
-        var limpa = document.createElement('button'); limpa.type = 'button'; limpa.textContent = ' · limpar';
-        limpa.addEventListener('click', function () { limparConfirmados(ym, sec.itens); });
-        acoes.appendChild(limpa);
-      }
-      if (limpos.length) {
-        var volta = document.createElement('button'); volta.type = 'button';
-        volta.textContent = ' · ' + limpos.length + ' limpos: trazer';
-        volta.addEventListener('click', function () { saveCustom(LS_LIMPOS + ym, []); render(); });
-        acoes.appendChild(volta);
-      }
-      h.appendChild(acoes);
-    }
-    list.appendChild(h);
-    if (sec.confirmados && !aberto) return;
-    sec.itens.forEach(function (m) { list.appendChild(linha(m)); });
-  });
-
-  updateSyncBtn();
-}
-
-/* limpar: some da tela o que o Mac já confirmou (fica no Mac; «trazer» mostra de novo) e
- * apaga daqui as cópias locais que ele já tem */
-var LS_LIMPOS = 'f3budget.jotter.limpos.', LS_CONF_ABERTO = 'f3budget.jotter.confirmados.aberto';
-function limparConfirmados(ym, itens) {
-  var ids = loadCustom(LS_LIMPOS + ym, []);
-  itens.forEach(function (m) { if (ids.indexOf(m.tx.id) < 0) ids.push(m.tx.id); });
-  saveCustom(LS_LIMPOS + ym, ids);
-  var remoto = {};
-  ((getRemote(ym) || {}).ledger || []).forEach(function (t) { if (t.confirmado_em) remoto[t.id] = true; });
-  var synced = getSynced(ym);
-  // o pedido de desfazer fica: ele é o que está esperando o Mac
-  saveMonth(ym, loadMonth(ym).filter(function (t) { return t.desfeito || !(remoto[t.id] && synced[t.id]); }));
+function limpar() {
+  var n = aEnviar().length;
+  if (!loadMsgs().length) { toast('Nada a limpar'); return; }
+  if (!confirm(n ? 'Limpar tudo? ' + n + ' ainda não saiu(íram) e vai(ão) se perder.'
+                 : 'Limpar tudo deste aparelho? O que já saiu está no Mac.')) return;
+  saveMsgs([]);
   render();
   toast('Limpo');
 }
 
-/* Copiar/Baixar JSON saíram (23/09/2026): o jotter só anota e envia; qualquer
-   ajuste é feito no Mac, pela shell do f3budget. */
+/* o que está no aparelho, num arquivo: no Mac, `import <arquivo>` põe na caixa de entrada */
+function exportar() {
+  var ms = loadMsgs();
+  if (!ms.length) { toast('Nada a exportar'); return; }
+  var id = getIdent() || {};
+  var agora = new Date();
+  var doc = { f3: 'export', v: 3, pessoa: id.pessoa || null, dispositivo: id.dispositivo || null,
+              gerado_em: agora.toISOString(), transacoes: ms.map(function (m) { return m.tx; }) };
+  var nome = 'f3budget-' + (id.dispositivo || 'jotter') + '-' + todayISO() + '-' +
+             String(agora.getHours()).padStart(2, '0') + String(agora.getMinutes()).padStart(2, '0') + '.json';
+  var texto = JSON.stringify(doc, null, 2);
+  var arquivo = null;
+  try { arquivo = new File([texto], nome, { type: 'application/json' }); } catch (e) {}
+  if (arquivo && navigator.canShare && navigator.canShare({ files: [arquivo] })) {
+    navigator.share({ files: [arquivo], title: nome }).catch(function () {});
+    return;
+  }
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([texto], { type: 'application/json' }));
+  a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+}
 
-/* ============================ toast ============================ */
+/* ===================== a lista ===================== */
+
+var FORMA_LABELS = { credito: 'crédito', debito: 'débito', pix: 'pix', dinheiro: 'dinheiro' };
+
+function render() {
+  var ms = loadMsgs().slice().reverse();     // o mais novo em cima, como numa conversa
+  var list = $('msgList');
+  list.textContent = '';
+  var total = 0;
+  ms.forEach(function (m) { if (typeof m.tx.valor === 'number') total += m.tx.valor; });
+  $('msgTotal').textContent = ms.length ? fmtBRL(Math.round(total * 100) / 100) : '';
+  if (!ms.length) {
+    var e = document.createElement('div'); e.className = 'empty';
+    e.textContent = 'Nada lançado neste aparelho.';
+    list.appendChild(e);
+  }
+  ms.forEach(function (m) {
+    var t = m.tx;
+    var row = document.createElement('div'); row.className = 'tx';
+    var marca = document.createElement('div');
+    marca.className = 'marca ' + (m.enviado ? 'ok' : 'fila');
+    marca.textContent = m.enviado ? '✓' : '⏳';
+    marca.title = m.enviado ? 'enviado' : 'a enviar';
+    var info = document.createElement('div'); info.className = 'info';
+    var d1 = document.createElement('div'); d1.className = 'desc'; d1.textContent = t.descricao;
+    var d2 = document.createElement('div'); d2.className = 'meta';
+    d2.textContent = [fmtData(t.data), FORMA_LABELS[t.forma] || t.forma, t.rubrica, t.local]
+      .filter(Boolean).join(' · ');
+    info.appendChild(d1); info.appendChild(d2);
+    var val = document.createElement('div');
+    val.className = 'val' + (typeof t.valor === 'number' && t.valor < 0 ? ' neg' : '');
+    val.textContent = typeof t.valor === 'number' ? fmtBRL(t.valor) : '—';
+    row.appendChild(marca); row.appendChild(info); row.appendChild(val);
+    if (!m.enviado) {   // o que ainda não saiu se tira daqui; o que saiu, corrige-se no Mac
+      var rm = document.createElement('button');
+      rm.className = 'rm'; rm.type = 'button'; rm.textContent = '✕';
+      rm.setAttribute('aria-label', 'Remover ' + t.descricao);
+      rm.addEventListener('click', function () { if (confirm('Remover "' + t.descricao + '"?')) tirar(t.id); });
+      row.appendChild(rm);
+    }
+    list.appendChild(row);
+  });
+  if (!enviando) {
+    var n = aEnviar().length;
+    $('btnEnviar').disabled = false;
+    $('btnEnviar').textContent = n ? 'Enviar (' + n + ')' : 'Enviar';
+  }
+}
+
+/* ===================== a versão anterior (até a 5c) =====================
+ * Traz o que ainda não tinha saído para a lista nova, e a conta da água do mês; o resto
+ * (o que veio do Mac, as marcas de enviado, os containers) sai do aparelho. */
+function migrar() {
+  var velhos = [], i, k;
+  for (i = 0; i < localStorage.length; i++) {
+    k = localStorage.key(i);
+    if (k && k.indexOf('f3budget.jotter.') === 0 && !/^f3budget\.jotter\.(mensagens$|d$|agua\.)/.test(k)) velhos.push(k);
+  }
+  if (!velhos.length) return 0;
+  var ms = loadMsgs(), ids = {}, n = 0;
+  ms.forEach(function (m) { ids[m.tx.id] = true; });
+  velhos.forEach(function (k) {
+    var ym = k.slice('f3budget.jotter.v2.'.length);
+    if (k.indexOf('f3budget.jotter.v2.') !== 0) return;
+    var enviados = loadCustom('f3budget.jotter.synced.' + ym, {});
+    (loadCustom(k, []) || []).forEach(function (t) {
+      if (t.id === ym + '-agua-mineral' && t.itens && !loadCustom(LS_AGUA + ym, null)) saveCustom(LS_AGUA + ym, t.itens);
+      if (enviados[t.id] || ids[t.id] || t.desfeito) return;
+      delete t.container; delete t.realiza;
+      ms.push({ tx: t, enviado: null }); ids[t.id] = true; n++;
+    });
+  });
+  saveMsgs(ms);
+  velhos.forEach(function (k) { try { localStorage.removeItem(k); } catch (e) {} });
+  return n;
+}
+
+/* ============================ toast / tema ============================ */
 
 var toastTimer = null;
 function toast(msg) {
@@ -1672,8 +921,6 @@ function toast(msg) {
   toastTimer = setTimeout(function () { t.classList.remove('show'); }, 1800);
 }
 
-/* ============================ tema ============================ */
-
 function syncThemeBtn() {
   $('themeBtn').textContent = document.documentElement.classList.contains('dark') ? '☀' : '🌙';
 }
@@ -1683,78 +930,60 @@ $('themeBtn').addEventListener('click', function () {
   syncThemeBtn();
 });
 
+/* ============================ apps / navegação ============================ */
+
+var SCREENS = ['home', 'gasto', 'agua', 'diarista'];
+function showScreen(name) {
+  SCREENS.forEach(function (s) { var el = $('screen-' + s); if (el) el.hidden = (s !== name); });
+  $('backBtn').hidden = (name === 'home');
+  if (name === 'agua') renderAgua();
+  window.scrollTo(0, 0);
+}
+
 /* ============================ init ============================ */
 
-var QUEM_OPTS = [
-  { value: 'conjunta', label: 'Conjunta' },
-  { value: 'felipe',   label: CONFIG.pessoas.felipe.nome },
-  { value: 'natalia',  label: CONFIG.pessoas.natalia.nome }
-];
-var FORMA_SEG_LABELS = { credito: 'Crédito', debito: 'Débito', pix: 'Pix', dinheiro: 'Dinheiro' };
-
 $('fData').value = todayISO();
-$('fContainer').value = loadCustom(LS_ONDE, 'casa');
-$('fContainer').addEventListener('change', onContainerChange);
-buildContainers();
-buildLocais();
-buildOrcamentos();
-buildContaSelect();
-buildTagChips();
-$('fConta').addEventListener('change', onContaChange);
 buildSeg($('segForma'),
-  CONFIG.formas.map(function (f) { return { value: f, label: FORMA_SEG_LABELS[f] || f }; }),
+  [{ value: 'credito', label: 'Crédito' }, { value: 'debito', label: 'Débito' },
+   { value: 'pix', label: 'Pix' }, { value: 'dinheiro', label: 'Dinheiro' }],
   function () { return state.forma; }, function (v) { state.forma = v; });
-buildSeg($('segQuem'), QUEM_OPTS,
-  function () { return state.quem_pagou; }, function (v) { state.quem_pagou = v; });
-buildSeg($('segPago'),
-  [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
+buildSeg($('segQuem'), [{ value: 'eu', label: 'Eu' }, { value: 'conjunta', label: 'Conjunta' }],
+  function () { return state.quem; }, function (v) { state.quem = v; });
+buildSeg($('segPago'), [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
   function () { return state.pago; }, function (v) { state.pago = v; });
-buildSeg($('segRateio'),
-  [{ value: 'casal', label: 'Casal' },   // «Meio» saiu da tela (23/09/2026): o 50/50 fica para o Mac
-   { value: 'felipe', label: 'Felipe' }, { value: 'natalia', label: 'Natália' }],
-  function () { return state.rateio; }, function (v) { state.rateio = v; updateRateioHint(); });
-
-$('fValor').addEventListener('input', updateRateioHint);
-$('fData').addEventListener('change', render);
+buildSeg($('segRateio'), [{ value: 'casal', label: 'Casal' }, { value: 'meu', label: 'Só meu' }],
+  function () { return state.rateio; }, function (v) { state.rateio = v; });
 $('txForm').addEventListener('submit', addTx);
 
-/* sync (passo 2) */
-$('cfgBtn').addEventListener('click', function () {
-  var c = $('cfgCard');
-  if (c.hidden) openCfg(); else closeCfg();
-});
+$('cfgBtn').addEventListener('click', function () { if ($('cfgCard').hidden) openCfg(); else closeCfg(); });
 $('cfgClose').addEventListener('click', closeCfg);
-$('btnSync').addEventListener('click', function () { sincronizar(false); });
+$('btnEnviar').addEventListener('click', function () { enviar(false); });
+$('btnExportar').addEventListener('click', exportar);
+$('btnLimpar').addEventListener('click', limpar);
 
-/* apps / navegação */
 $('backBtn').addEventListener('click', function () { showScreen('home'); });
 Array.prototype.forEach.call(document.querySelectorAll('.appicon'), function (b) {
   b.addEventListener('click', function () { showScreen(b.getAttribute('data-app')); });
 });
+
 $('diaData').value = todayISO();
-$('diaData').addEventListener('change', renderDiarista);
 $('btnDiaAdd').addEventListener('click', addDiaria);
-buildSeg($('segDiaPago'),
-  [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
+buildSeg($('segDiaPago'), [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
   function () { return diaState.pago; }, function (v) { diaState.pago = v; });
 
-/* app Água */
 $('agData').value = todayISO();
 $('agData').addEventListener('change', renderAgua);
 $('btnAgAdd').addEventListener('click', addAgua);
 $('agP10').addEventListener('change', onAguaPriceChange);
 $('agP20').addEventListener('change', onAguaPriceChange);
-buildSeg($('segAgTam'),
-  [{ value: 10, label: '10L' }, { value: 20, label: '20L' }],
+buildSeg($('segAgTam'), [{ value: 10, label: '10L' }, { value: 20, label: '20L' }],
   function () { return agState.tamanho; }, function (v) { agState.tamanho = v; });
-buildSeg($('segAgQtd'),
-  [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }],
+buildSeg($('segAgQtd'), [{ value: 1, label: '1' }, { value: 2, label: '2' }, { value: 3, label: '3' }],
   function () { return agState.qtd; }, function (v) { agState.qtd = v; });
 loadAguaPrices();
 
 syncThemeBtn();
-buildParaQuem();
-updateRateioHint();
+migrar();
 render();
 showScreen('home');
 $('versao').textContent = VERSAO;
@@ -1762,9 +991,9 @@ $('versao').textContent = VERSAO;
 /* abre sem rede: o service worker guarda a página e a biblioteca */
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(function () {});
 lerFragmento();
-/* o que ficou pendente sai sozinho quando a rede volta (e ao abrir, se houver rede) */
-window.addEventListener('online', function () { sincronizar(true); });
-if (macPub() && navigator.onLine) sincronizar(true);
+/* o que ficou para depois sai sozinho quando a rede volta (e ao abrir, se houver rede) */
+window.addEventListener('online', function () { enviar(true); });
+if (macPub() && navigator.onLine) enviar(true);
 </script>
 </body>
 </html>

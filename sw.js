@@ -6,7 +6,7 @@
 // A versão 2 guardava primeiro e servia o guardado — e, pior, enchia o guardado
 // pelo cache HTTP do navegador, que ainda tinha a página velha (23/09/2026).
 // Por isso tudo aqui é buscado com `cache: 'reload'`, que passa por cima dele.
-const VERSAO = 'jotter-2026-09-24-2'
+const VERSAO = 'jotter-2026-09-24-3'
 const ARQUIVOS = ['./', './index.html', './nostr-tools-2.25.2.js', './manifest.webmanifest', './icone-180.png']
 const PRAZO_REDE = 3000
 
