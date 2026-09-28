@@ -17,7 +17,8 @@
     - o que se lança fica numa lista, com ✓ quando saiu;
     - Enviar manda pelo Nostr (cifrado, só o Mac lê) o que falta;
     - Limpar apaga tudo do aparelho; Exportar JSON é a saída quando o Nostr falha;
-    - o formulário não tem listas: a rubrica, a conta e o local são texto livre;
+    - o formulário não tem listas: a rubrica e o local são texto livre; a conta é C6, a
+      minha ou outra (28/09/2026), e o rateio é sempre 50/50 (o ajuste é no Mac);
     - as mini apps (Água, Diarista) só lançam.
   Nada volta do Mac além do «pareado». Toda a lógica mora no Mac (TAREFA.md, «o jotter
   vira mensageiro»). Abre sem rede pelo service worker (sw.js).
@@ -307,15 +308,16 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
         <input type="text" id="fRubrica" placeholder="ex.: feira, farmácia, escola do Fael" enterkeyhint="next">
       </div>
 
-      <div class="row2">
-        <div class="field">
-          <label for="fConta">Conta (opcional)</label>
-          <input type="text" id="fConta" placeholder="ex.: C6, Nubank" autocapitalize="none" enterkeyhint="next">
-        </div>
-        <div class="field">
-          <label for="fLocal">Local (opcional)</label>
-          <input type="text" id="fLocal" placeholder="ex.: Armazém Guimarães" enterkeyhint="next">
-        </div>
+      <div class="field">
+        <label>Conta</label>
+        <div class="seg" id="segConta" role="radiogroup" aria-label="Conta"></div>
+        <input type="text" id="fContaOutra" placeholder="qual? ex.: Nubank" autocapitalize="none"
+               enterkeyhint="next" hidden style="margin-top:8px;">
+      </div>
+
+      <div class="field">
+        <label for="fLocal">Local (opcional)</label>
+        <input type="text" id="fLocal" placeholder="ex.: Armazém Guimarães" enterkeyhint="next">
       </div>
 
       <div class="field">
@@ -324,18 +326,8 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
       </div>
 
       <div class="field">
-        <label>Quem pagou</label>
-        <div class="seg" id="segQuem" role="radiogroup" aria-label="Quem pagou"></div>
-      </div>
-
-      <div class="field">
         <label>Pago?</label>
         <div class="seg" id="segPago" role="radiogroup" aria-label="Pago"></div>
-      </div>
-
-      <div class="field">
-        <label>Rateio</label>
-        <div class="seg" id="segRateio" role="radiogroup" aria-label="Rateio"></div>
       </div>
 
       <div class="field">
@@ -427,7 +419,7 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
 <script>
 'use strict';
 
-var VERSAO = 'jotter · fatia 5d · 24/09/2026 · mensageiro';
+var VERSAO = 'jotter · fatia 5e · 28/09/2026 · conta e rateio';
 
 /* ============================ helpers ============================ */
 
@@ -513,7 +505,10 @@ function novoId(data, descricao) { return data + '-' + slugify(descricao) + '-' 
 
 /* ==================== estado dos segmented ==================== */
 
-var state = { forma: 'credito', quem: 'eu', pago: true, rateio: 'casal' };
+/* 28/09/2026 (decisão dele): quem pagou sai da CONTA, e o rateio é sempre 50/50 — o ajuste
+ * se faz no Mac. «Minha conta» é a conta pessoal de quem está pareado. */
+var state = { forma: 'credito', pago: true, conta: 'c6' };
+var MINHA_CONTA = { felipe: 'caixa', natalia: 'natalia' };
 
 function buildSeg(el, opts, get, set) {
   opts.forEach(function (o) {
@@ -556,13 +551,16 @@ function addTx(ev) {
   if (!isFinite(valor)) { showErr('Valor inválido — use 12,50 ou 12.50 (negativo = reembolso).'); $('fValor').focus(); return; }
 
   var tx = { id: novoId(data, descricao), data: data, descricao: descricao, valor: valor };
-  var conta = $('fConta').value.trim(), rubrica = $('fRubrica').value.trim(), local = $('fLocal').value.trim();
-  if (conta) tx.conta = slugify(conta);
+  var rubrica = $('fRubrica').value.trim(), local = $('fLocal').value.trim();
+  var conta = state.conta === 'c6' ? 'c6'
+    : state.conta === 'minha' ? MINHA_CONTA[eu()]
+    : slugify($('fContaOutra').value.trim());
+  if (conta) tx.conta = conta;
   tx.forma = state.forma;
   tx.pago = state.pago;
-  tx.quem_pagou = state.quem === 'eu' ? eu() : 'conjunta';
+  tx.quem_pagou = state.conta === 'c6' ? 'conjunta' : eu();   // informativo: no Mac, vale o titular da conta
   if (rubrica) tx.rubrica = rubrica;          // texto livre: o Mac dá o `orcamento`
-  tx.rateio = state.rateio === 'meu' ? eu() : 'casal';
+  tx.rateio = 'meio';
   tx.origem = 'jotter';
   if (local) tx.local = local;
   var nota = $('fObs').value.trim();
@@ -947,12 +945,12 @@ buildSeg($('segForma'),
   [{ value: 'credito', label: 'Crédito' }, { value: 'debito', label: 'Débito' },
    { value: 'pix', label: 'Pix' }, { value: 'dinheiro', label: 'Dinheiro' }],
   function () { return state.forma; }, function (v) { state.forma = v; });
-buildSeg($('segQuem'), [{ value: 'eu', label: 'Eu' }, { value: 'conjunta', label: 'Conjunta' }],
-  function () { return state.quem; }, function (v) { state.quem = v; });
+buildSeg($('segConta'), [{ value: 'c6', label: 'C6' }, { value: 'minha', label: 'Minha conta' },
+  { value: 'outra', label: 'Outra' }],
+  function () { return state.conta; },
+  function (v) { state.conta = v; $('fContaOutra').hidden = v !== 'outra'; if (v === 'outra') $('fContaOutra').focus(); });
 buildSeg($('segPago'), [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
   function () { return state.pago; }, function (v) { state.pago = v; });
-buildSeg($('segRateio'), [{ value: 'casal', label: 'Casal' }, { value: 'meu', label: 'Só meu' }],
-  function () { return state.rateio; }, function (v) { state.rateio = v; });
 $('txForm').addEventListener('submit', addTx);
 
 $('cfgBtn').addEventListener('click', function () { if ($('cfgCard').hidden) openCfg(); else closeCfg(); });
