@@ -18,8 +18,8 @@
     - Enviar manda pelo Nostr (cifrado, só o Mac lê) o que falta;
     - Limpar apaga tudo do aparelho; Exportar JSON é a saída quando o Nostr falha;
     - o formulário não tem listas: a rubrica e o local são texto livre; a conta é C6, a
-      minha ou outra (28/09/2026), e o rateio é sempre 50/50 (o ajuste é no Mac);
-    - as mini apps (Água, Diarista) só lançam.
+      minha ou outra (28/09/2026), e o responsável quem decide é o Mac (a rubrica, ou 50/50);
+    - as mini apps (Água, Diarista, Aporte) só lançam.
   Nada volta do Mac além do «pareado». Toda a lógica mora no Mac (TAREFA.md, «o jotter
   vira mensageiro»). Abre sem rede pelo service worker (sw.js).
 -->
@@ -224,6 +224,7 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
 .glyph.g-gasto { background: linear-gradient(135deg, #38bdf8, #0284c7); }
 .glyph.g-agua { background: linear-gradient(135deg, #22d3ee, #0369a1); }
 .glyph.g-diarista { background: linear-gradient(135deg, #34d399, #059669); }
+.glyph.g-aporte { background: linear-gradient(135deg, #fbbf24, #b45309); }
 
 /* ==== Toast ==== */
 #toast {
@@ -278,6 +279,7 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
         <button class="appicon" type="button" data-app="gasto"><span class="glyph g-gasto">💸</span><span class="label">Gasto</span></button>
         <button class="appicon" type="button" data-app="agua"><span class="glyph g-agua">💧</span><span class="label">Água</span></button>
         <button class="appicon" type="button" data-app="diarista"><span class="glyph g-diarista">🧹</span><span class="label">Diarista</span></button>
+        <button class="appicon" type="button" data-app="aporte"><span class="glyph g-aporte">🏦</span><span class="label">Aporte</span></button>
       </div>
     </section>
   </div>
@@ -375,11 +377,26 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
     </section>
   </div>
 
+  <!-- ===== APP: APORTE (28/09/2026): o dinheiro que cada um põe na conta corrente do C6 ===== -->
+  <div class="screen" id="screen-aporte" hidden>
+    <section class="card">
+      <h2>Aporte no C6</h2>
+      <p class="hint">O que você depositou na <strong>conta corrente do C6</strong>, o pote do casal:
+      antes das despesas no débito, ou antes de pagar a fatura. Conta a seu favor no acerto.</p>
+      <div class="row2">
+        <div class="field"><label for="apData">Data</label><input type="date" id="apData"></div>
+        <div class="field"><label for="apValor">Valor (R$)</label><input type="text" id="apValor" inputmode="decimal" placeholder="0,00"></div>
+      </div>
+      <button class="btn btn-primary" id="btnApAdd" type="button">Registrar aporte</button>
+      <div class="err" id="apErr"></div>
+    </section>
+  </div>
+
   <!-- ===== APP: DIARISTA ===== -->
   <div class="screen" id="screen-diarista" hidden>
     <section class="card">
       <h2>Diarista</h2>
-      <p class="hint">Padrão: <strong>R$ 150</strong> por visita · rateio meio · conta conjunta.
+      <p class="hint">Padrão: <strong>R$ 150</strong> por visita · a conta, pelo dia (terça Natália, sexta Felipe).
       Registre quando ela vier.</p>
       <div class="row2">
         <div class="field"><label for="diaData">Data</label><input type="date" id="diaData"></div>
@@ -419,7 +436,7 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
 <script>
 'use strict';
 
-var VERSAO = 'jotter · fatia 5e · 28/09/2026 · conta e rateio';
+var VERSAO = 'jotter · fatia 5g · 30/09/2026 · diarista por dia';
 
 /* ============================ helpers ============================ */
 
@@ -505,8 +522,9 @@ function novoId(data, descricao) { return data + '-' + slugify(descricao) + '-' 
 
 /* ==================== estado dos segmented ==================== */
 
-/* 28/09/2026 (decisão dele): quem pagou sai da CONTA, e o rateio é sempre 50/50 — o ajuste
- * se faz no Mac. «Minha conta» é a conta pessoal de quem está pareado. */
+/* 28/09/2026 (decisão dele): quem pagou sai da CONTA, e o jotter não diz quem é o responsável
+ * (o Mac decide: a rubrica do orçamento, ou 50/50; a exceção se anota lá). «Minha conta» é a
+ * conta pessoal de quem está pareado. */
 var state = { forma: 'credito', pago: true, conta: 'c6' };
 var MINHA_CONTA = { felipe: 'caixa', natalia: 'natalia' };
 
@@ -560,7 +578,6 @@ function addTx(ev) {
   tx.pago = state.pago;
   tx.quem_pagou = state.conta === 'c6' ? 'conjunta' : eu();   // informativo: no Mac, vale o titular da conta
   if (rubrica) tx.rubrica = rubrica;          // texto livre: o Mac dá o `orcamento`
-  tx.rateio = 'meio';
   tx.origem = 'jotter';
   if (local) tx.local = local;
   var nota = $('fObs').value.trim();
@@ -577,7 +594,25 @@ function addTx(ev) {
   $('fDescricao').focus();
 }
 
-/* ---- app Diarista: R$150/visita; o id é o dia (o Mac liga à visita prevista pelo id) ---- */
+/* ---- app Aporte: o depósito de quem está pareado na conta corrente do C6 (tipo aporte) ---- */
+function addAporte() {
+  var err = $('apErr');
+  var data = $('apData').value;
+  var valor = parseValor($('apValor').value);
+  if (!data) { err.style.display = 'block'; err.textContent = 'Falta a data.'; return; }
+  if (!isFinite(valor) || valor <= 0) { err.style.display = 'block'; err.textContent = 'Valor inválido — use 2000,00.'; return; }
+  err.style.display = 'none';
+  var quem = eu();
+  var nome = quem === 'natalia' ? 'Natália' : quem === 'felipe' ? 'Felipe' : quem;
+  guardar({
+    id: novoId(data, 'aporte-' + quem), data: data, descricao: 'Aporte ' + nome, valor: valor,
+    tipo: 'aporte', conta: 'c6', forma: 'pix', pago: true, quem_pagou: quem, origem: 'jotter'
+  });
+  $('apValor').value = '';
+  toast('Aporte registrado');
+}
+
+/* ---- app Diarista: R$150/visita; o id é o dia (o Mac liga à visita prevista pelo id, e dela tira a conta) ---- */
 var diaState = { pago: true };
 
 function addDiaria() {
@@ -588,9 +623,10 @@ function addDiaria() {
   if (!isFinite(valor)) { err.style.display = 'block'; err.textContent = 'Valor inválido — use 150,00.'; return; }
   err.style.display = 'none';
   guardar({
-    id: data + '-diarista', data: data, descricao: 'Diarista', valor: valor,
-    conta: 'c6', forma: 'pix', pago: diaState.pago, quem_pagou: 'conjunta',
-    tags: ['servicos'], orcamento: 'APARTAMENTO.DIARISTA', rateio: 'meio', para_quem: 'todos', origem: 'jotter'
+    id: data + '-diarista', data: data, descricao: 'Diarista', valor: valor, pago: diaState.pago,
+    /* sem conta, forma e quem pagou (30/09/2026): dependem do dia (terça a Natália, sexta o Felipe);
+     * no commit, o Mac os tira da visita prevista, que sabe */
+    tags: ['servicos'], orcamento: 'APARTAMENTO.DIARISTA', para_quem: 'todos', origem: 'jotter'
   });
   toast('Visita registrada');
 }
@@ -618,7 +654,7 @@ function saveAguaItems(ym, items) {
     id: id, data: ym + '-01', descricao: 'Água mineral (galões)',
     valor: Math.round(items.reduce(function (a, it) { return a + it.valor; }, 0) * 100) / 100,
     conta: 'c6', forma: 'debito', pago: false, quem_pagou: 'conjunta',
-    tags: ['alimentacao'], orcamento: 'APARTAMENTO.AGUA_MINERAL', rateio: 'meio', para_quem: 'todos',
+    tags: ['alimentacao'], orcamento: 'APARTAMENTO.AGUA_MINERAL', para_quem: 'todos',
     vencimento: aguaVenc(ym), origem: 'consumo',
     obs: 'Tally de galões (app Água). Vence dia 10 do mês seguinte; a despesa é do mês de consumo.',
     itens: items
@@ -930,7 +966,7 @@ $('themeBtn').addEventListener('click', function () {
 
 /* ============================ apps / navegação ============================ */
 
-var SCREENS = ['home', 'gasto', 'agua', 'diarista'];
+var SCREENS = ['home', 'gasto', 'agua', 'diarista', 'aporte'];
 function showScreen(name) {
   SCREENS.forEach(function (s) { var el = $('screen-' + s); if (el) el.hidden = (s !== name); });
   $('backBtn').hidden = (name === 'home');
@@ -964,6 +1000,8 @@ Array.prototype.forEach.call(document.querySelectorAll('.appicon'), function (b)
   b.addEventListener('click', function () { showScreen(b.getAttribute('data-app')); });
 });
 
+$('apData').value = todayISO();
+$('btnApAdd').addEventListener('click', addAporte);
 $('diaData').value = todayISO();
 $('btnDiaAdd').addEventListener('click', addDiaria);
 buildSeg($('segDiaPago'), [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
