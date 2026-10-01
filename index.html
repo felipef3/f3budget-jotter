@@ -152,6 +152,9 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
   white-space: nowrap;
 }
 .seg button.on { background: var(--accent); color: #ffffff; }
+/* «para quem» (fatia 5h): vários marcados ao mesmo tempo; quebra a linha, cada um do tamanho do nome */
+.seg.multi { flex-wrap: wrap; border-radius: 18px; }
+.seg.multi button { flex: 1 1 auto; }
 .hint { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 18px; }
 
 /* ==== Botões ==== */
@@ -311,6 +314,12 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
       </div>
 
       <div class="field">
+        <label>Para quem (opcional)</label>
+        <div class="seg multi" id="segPara" role="group" aria-label="Para quem foi"></div>
+        <div class="hint" id="paraHint">nenhum marcado: de todos</div>
+      </div>
+
+      <div class="field">
         <label>Conta</label>
         <div class="seg" id="segConta" role="radiogroup" aria-label="Conta"></div>
         <input type="text" id="fContaOutra" placeholder="qual? ex.: Nubank" autocapitalize="none"
@@ -436,7 +445,7 @@ input[inputmode="decimal"] { font-size: 20px; font-weight: 600; }
 <script>
 'use strict';
 
-var VERSAO = 'jotter · fatia 5g · 30/09/2026 · diarista por dia';
+var VERSAO = 'jotter · fatia 5h · 01/10/2026 · para quem';
 
 /* ============================ helpers ============================ */
 
@@ -527,6 +536,34 @@ function novoId(data, descricao) { return data + '-' + slugify(descricao) + '-' 
  * conta pessoal de quem está pareado. */
 var state = { forma: 'credito', pago: true, conta: 'c6' };
 var MINHA_CONTA = { felipe: 'caixa', natalia: 'natalia' };
+/* para quem foi o gasto (fatia 5h, 01/10/2026): os ids são os do membros.json do Mac, e não mudam;
+   nenhum marcado é «todos» (o campo nem vai). No Mac, a planilha guarda como bits (F··L). */
+var MEMBROS = [{ id: 'felipe', label: 'Felipe' }, { id: 'natalia', label: 'Natália' },
+  { id: 'rafael', label: 'Rafael' }, { id: 'luis-felipe', label: 'Luís Felipe' }, { id: 'gatos', label: 'Gatos' }];
+state.para = [];
+function buildMulti(el) {
+  MEMBROS.forEach(function (m) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = m.label;
+    b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', function () {
+      var i = state.para.indexOf(m.id);
+      if (i >= 0) state.para.splice(i, 1); else state.para.push(m.id);
+      syncMulti(el);
+    });
+    el.appendChild(b);
+  });
+  syncMulti(el);
+}
+function syncMulti(el) {
+  Array.prototype.forEach.call(el.children, function (b, i) {
+    var on = state.para.indexOf(MEMBROS[i].id) >= 0;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  $('paraHint').textContent = state.para.length ? '' : 'nenhum marcado: de todos';
+}
 
 function buildSeg(el, opts, get, set) {
   opts.forEach(function (o) {
@@ -578,6 +615,8 @@ function addTx(ev) {
   tx.pago = state.pago;
   tx.quem_pagou = state.conta === 'c6' ? 'conjunta' : eu();   // informativo: no Mac, vale o titular da conta
   if (rubrica) tx.rubrica = rubrica;          // texto livre: o Mac dá o `orcamento`
+  if (state.para.length) tx.para_quem = MEMBROS.map(function (m) { return m.id; })
+    .filter(function (id) { return state.para.indexOf(id) >= 0; });   // na ordem do cadastro
   tx.origem = 'jotter';
   if (local) tx.local = local;
   var nota = $('fObs').value.trim();
@@ -589,6 +628,8 @@ function addTx(ev) {
   $('fValor').value = '';
   $('fObs').value = '';
   $('fClaude').checked = false;
+  state.para = [];                            // «para quem» é de cada item: volta a «todos»
+  syncMulti($('segPara'));
   guardar(tx);
   toast('Adicionado');
   $('fDescricao').focus();
@@ -987,6 +1028,7 @@ buildSeg($('segConta'), [{ value: 'c6', label: 'C6' }, { value: 'minha', label: 
   function (v) { state.conta = v; $('fContaOutra').hidden = v !== 'outra'; if (v === 'outra') $('fContaOutra').focus(); });
 buildSeg($('segPago'), [{ value: true, label: 'Já paguei' }, { value: false, label: 'Pendente' }],
   function () { return state.pago; }, function (v) { state.pago = v; });
+buildMulti($('segPara'));
 $('txForm').addEventListener('submit', addTx);
 
 $('cfgBtn').addEventListener('click', function () { if ($('cfgCard').hidden) openCfg(); else closeCfg(); });
